@@ -2,7 +2,16 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Numeric, String, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database.conexao import Base
@@ -16,11 +25,27 @@ if TYPE_CHECKING:
 
 
 class Produto(Base):
-    """Representa um produto comercializado pela empresa."""
+    """Representa um smartphone comercializado pela empresa."""
 
     __tablename__ = "produto"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    __table_args__ = (
+        CheckConstraint(
+            "armazenamento_gb > 0",
+            name="ck_produto_armazenamento_positivo",
+        ),
+        CheckConstraint(
+            "preco_venda > 0",
+            name="ck_produto_preco_venda_positivo",
+        ),
+    )
+
+    # Chave primária da tabela
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
 
     nome: Mapped[str] = mapped_column(
         String(150),
@@ -32,16 +57,22 @@ class Produto(Base):
     categoria: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
-        index=True,
+        default="Smartphone",
     )
 
     marca: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
+        index=True,
+    )
+
+    armazenamento_gb: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
     )
 
     descricao: Mapped[str | None] = mapped_column(
-        String(500),
+        Text,
         nullable=True,
     )
 
@@ -72,26 +103,34 @@ class Produto(Base):
     estoque: Mapped["Estoque | None"] = relationship(
         back_populates="produto",
         uselist=False,
+        cascade="all, delete-orphan",
     )
 
     compras: Mapped[list["Compra"]] = relationship(
         back_populates="produto",
+        cascade="all, delete-orphan",
     )
 
     vendas: Mapped[list["Venda"]] = relationship(
         back_populates="produto",
+        cascade="all, delete-orphan",
     )
 
     precos_concorrentes: Mapped[list["PrecoConcorrente"]] = relationship(
         back_populates="produto",
+        cascade="all, delete-orphan",
     )
 
     campanhas_produtos: Mapped[list["CampanhaProduto"]] = relationship(
         back_populates="produto",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:
         return (
-            f"Produto(id={self.id!r}, nome={self.nome!r}, "
-            f"marca={self.marca!r}, preco_venda={self.preco_venda!r})"
+            f"Produto(id={self.id!r}, "
+            f"nome={self.nome!r}, "
+            f"marca={self.marca!r}, "
+            f"armazenamento_gb={self.armazenamento_gb!r}, "
+            f"preco_venda={self.preco_venda!r})"
         )
