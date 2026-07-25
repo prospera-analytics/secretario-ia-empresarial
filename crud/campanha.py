@@ -361,14 +361,25 @@ def listar_produtos_da_campanha(
 
     consulta = (
         select(CampanhaProduto)
-        .options(joinedload(CampanhaProduto.produto))
+        .join(
+            Produto,
+            Produto.id == CampanhaProduto.produto_id,
+        )
+        .options(
+            joinedload(CampanhaProduto.produto)
+        )
         .where(
             CampanhaProduto.campanha_id == campanha_id
         )
-        .order_by(Produto.nome)
+        .order_by(
+            Produto.nome.asc(),
+            CampanhaProduto.id.asc(),
+        )
     )
 
-    return list(sessao.scalars(consulta).all())
+    return list(
+        sessao.scalars(consulta).all()
+    )
 
 
 def calcular_faturamento_campanha(
