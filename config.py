@@ -1,13 +1,11 @@
+import os
 from pathlib import Path
 
-# Diretório raiz do projeto
-ROOT_DIR = Path(__file__).parent
+ROOT_DIR = Path(__file__).resolve().parent
+DATABASE_DIR = ROOT_DIR / "database"
+SQLITE_PATH = DATABASE_DIR / "empresa.db"
 
-# Banco de dados
-DATABASE_URL = f"sqlite:///{ROOT_DIR}/database/empresa.db"
-
-# Pasta de documentos do RAG
-PASTA_DOCUMENTOS = ROOT_DIR / "dados" / "pdf"
-
-# Pasta dos CSVs
-PASTA_CSV = ROOT_DIR / "dados" / "csv"
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    f"sqlite:///{SQLITE_PATH.as_posix()}",
+)
