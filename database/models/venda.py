@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from database.conexao import Base
 
 if TYPE_CHECKING:
+    from database.models.campanha import Campanha
     from database.models.produto import Produto
 
 
@@ -37,6 +38,12 @@ class Venda(Base):
         nullable=False,
         index=True,
     )
+    
+    campanha_id: Mapped[int | None] = mapped_column(
+    ForeignKey("campanha.id"),
+    nullable=True,
+    index=True,
+)
 
     quantidade: Mapped[int] = mapped_column(
         Integer,
@@ -70,6 +77,10 @@ class Venda(Base):
     produto: Mapped["Produto"] = relationship(
         back_populates="vendas",
     )
+    
+    campanha: Mapped["Campanha | None"] = relationship(
+    back_populates="vendas",
+)
 
     @property
     def valor_total(self) -> Decimal:

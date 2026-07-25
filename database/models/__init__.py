@@ -1,3 +1,5 @@
+from database.models.campanha import Campanha
+from database.models.campanha_produto import CampanhaProduto
 from database.models.compra import Compra
 from database.models.concorrente import Concorrente
 from database.models.estoque import Estoque
@@ -14,4 +16,6 @@ __all__ = [
     "Venda",
     "Concorrente",
     "PrecoConcorrente",
+    "Campanha",
+    "CampanhaProduto",
 ]
