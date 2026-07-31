@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 from tavily import TavilyClient
 
+from web.concorrentes import gerar_urls_alternativas
+from web.concorrentes.amazon import (
+    eh_dominio_amazon_brasil,
+    normalizar_url_amazon,
+)
 
 load_dotenv()
 
@@ -19,7 +26,7 @@ if not _API_KEY:
 
 
 MAX_RESULTADOS_BUSCA = 8
-MAX_PAGINAS_EXTRACAO = 5
+MAX_PAGINAS_EXTRACAO = 8
 PONTUACAO_MINIMA_RESULTADO = 0.35
 
 
@@ -68,6 +75,66 @@ def _normalizar_dominio(
     return dominio_normalizado
 
 
+def _normalizar_url_para_comparacao(
+    url: str,
+) -> str:
+    """
+    Normaliza a URL para comparação.
+
+    Ignora:
+    - protocolo;
+    - prefixo www.;
+    - query string;
+    - fragmento;
+    - barra final.
+    """
+
+    partes = urlsplit(
+        url.strip()
+    )
+
+    dominio = partes.netloc.lower()
+
+    if dominio.startswith("www."):
+        dominio = dominio[4:]
+
+    caminho = re.sub(
+        r"/+",
+        "/",
+        partes.path,
+    ).rstrip("/")
+
+    return f"{dominio}{caminho}".lower()
+
+
+def _normalizar_url_especifica_concorrente(
+    url: str,
+) -> str | None:
+    """
+    Aplica regras específicas de validação e normalização por loja.
+
+    Para a Amazon Brasil:
+    - aceita somente páginas individuais de produto;
+    - rejeita páginas de busca e categorias;
+    - normaliza a URL para /dp/<ASIN>.
+
+    Para outros concorrentes, preserva a URL original.
+    """
+    url_limpa = url.strip()
+
+    if not url_limpa:
+        return None
+
+    if eh_dominio_amazon_brasil(
+        url_limpa
+    ):
+        return normalizar_url_amazon(
+            url_limpa
+        )
+
+    return url_limpa
+
+
 def _url_pertence_ao_dominio(
     url: str,
     dominio: str,
@@ -78,12 +145,126 @@ def _url_pertence_ao_dominio(
         dominio
     )
 
-    url_normalizada = url.strip().lower()
+    partes = urlsplit(
+        url.strip()
+    )
+
+    dominio_url = partes.netloc.lower()
+
+    if dominio_url.startswith("www."):
+        dominio_url = dominio_url[4:]
 
     return (
-        f"://{dominio_normalizado}" in url_normalizada
-        or f"://www.{dominio_normalizado}" in url_normalizada
+        dominio_url == dominio_normalizado
+        or dominio_url.endswith(
+            f".{dominio_normalizado}"
+        )
     )
+
+
+def _conteudo_indica_bloqueio(
+    conteudo: str,
+) -> bool:
+    """
+    Detecta páginas de bloqueio que a API pode retornar como sucesso.
+    """
+
+    texto = conteudo.casefold()
+
+    indicadores = (
+        "erro 403",
+        "error 403",
+        "access denied",
+        "acesso negado",
+        "não é possível acessar a página",
+        "nao e possivel acessar a pagina",
+        "por favor, tente novamente em 1 minuto",
+        "verify you are human",
+        "verifique se você é humano",
+        "captcha",
+    )
+
+    return any(
+        indicador in texto
+        for indicador in indicadores
+    )
+
+
+def _expandir_urls_especificas(
+    candidatos: list[ResultadoBuscaWeb],
+) -> list[ResultadoBuscaWeb]:
+    """
+    Acrescenta variações oficiais conhecidas das URLs encontradas.
+
+    As regras específicas de cada loja ficam nos módulos da pasta
+    web/concorrentes.
+    """
+
+    expandidos: list[ResultadoBuscaWeb] = []
+    urls_adicionadas: set[str] = set()
+
+    def adicionar(
+        candidato: ResultadoBuscaWeb,
+    ) -> None:
+        url_normalizada = (
+            _normalizar_url_especifica_concorrente(
+                candidato.url
+            )
+        )
+
+        if url_normalizada is None:
+            return
+
+        chave = _normalizar_url_para_comparacao(
+            url_normalizada
+        )
+
+        if not chave:
+            return
+
+        if chave in urls_adicionadas:
+            return
+
+        urls_adicionadas.add(
+            chave
+        )
+
+        expandidos.append(
+            ResultadoBuscaWeb(
+                titulo=candidato.titulo,
+                url=url_normalizada,
+                conteudo_resumo=(
+                    candidato.conteudo_resumo
+                ),
+                pontuacao=candidato.pontuacao,
+            )
+        )
+
+    for candidato in candidatos:
+        adicionar(
+            candidato
+        )
+
+        urls_alternativas = gerar_urls_alternativas(
+            candidato.url
+        )
+
+        for url_alternativa in urls_alternativas:
+            adicionar(
+                ResultadoBuscaWeb(
+                    titulo=candidato.titulo,
+                    url=url_alternativa,
+                    conteudo_resumo=(
+                        candidato.conteudo_resumo
+                    ),
+                    pontuacao=max(
+                        candidato.pontuacao - 0.001,
+                        0.0,
+                    ),
+                )
+            )
+
+    return expandidos
 
 
 def buscar_paginas_candidatas(
@@ -95,9 +276,7 @@ def buscar_paginas_candidatas(
     """
     Encontra páginas candidatas no domínio do concorrente.
 
-    Esta função não decide se a página é individual, não interpreta preço
-    e não acessa o banco. A validação principal será feita posteriormente
-    com o conteúdo obtido pela Tavily Extract.
+    Esta função não interpreta preços e não acessa o banco.
     """
 
     if not nome_produto.strip():
@@ -121,9 +300,8 @@ def buscar_paginas_candidatas(
 
     consulta = (
         f'"{nome_produto}" '
-        f'"R$" '
         f'{nome_concorrente} '
-        f'comprar'
+        f'preço comprar'
     )
 
     resposta = cliente_tavily.search(
@@ -144,6 +322,7 @@ def buscar_paginas_candidatas(
     )
 
     candidatos: list[ResultadoBuscaWeb] = []
+    urls_adicionadas: set[str] = set()
 
     for resultado in resposta.get(
         "results",
@@ -193,6 +372,28 @@ def buscar_paginas_candidatas(
         ):
             continue
 
+        url_normalizada = (
+            _normalizar_url_especifica_concorrente(
+                url
+            )
+        )
+
+        if url_normalizada is None:
+            continue
+
+        url = url_normalizada
+
+        chave_url = _normalizar_url_para_comparacao(
+            url
+        )
+
+        if chave_url in urls_adicionadas:
+            continue
+
+        urls_adicionadas.add(
+            chave_url
+        )
+
         candidatos.append(
             ResultadoBuscaWeb(
                 titulo=titulo,
@@ -211,11 +412,10 @@ def extrair_paginas_candidatas(
     max_paginas: int = MAX_PAGINAS_EXTRACAO,
 ) -> list[PaginaExtraida]:
     """
-    Extrai em lote o conteúdo das páginas mais bem pontuadas.
+    Expande as URLs conhecidas e extrai o conteúdo em lote.
 
-    A chamada usa query para priorizar trechos relacionados ao produto.
-    Há fallback para versões do SDK que ainda não aceitam query e
-    chunks_per_source no método extract().
+    Páginas bloqueadas, vazias ou não associadas a uma candidata são
+    descartadas antes de chegar ao serviço de análise de preços.
     """
 
     if not candidatos:
@@ -226,19 +426,30 @@ def extrair_paginas_candidatas(
             "max_paginas deve ser maior que zero."
         )
 
+    candidatos_expandidos = (
+        _expandir_urls_especificas(
+            candidatos
+        )
+    )
+
     candidatos_ordenados = sorted(
-        candidatos,
+        candidatos_expandidos,
         key=lambda item: item.pontuacao,
         reverse=True,
-    )[:min(max_paginas, MAX_PAGINAS_EXTRACAO)]
+    )[:min(
+        max_paginas,
+        MAX_PAGINAS_EXTRACAO,
+    )]
 
     urls = [
         candidato.url
         for candidato in candidatos_ordenados
     ]
 
-    por_url = {
-        candidato.url: candidato
+    por_url_normalizada = {
+        _normalizar_url_para_comparacao(
+            candidato.url
+        ): candidato
         for candidato in candidatos_ordenados
     }
 
@@ -251,25 +462,25 @@ def extrair_paginas_candidatas(
             ),
             chunks_per_source=5,
             extract_depth="advanced",
-            format="markdown",
+            format="text",
             include_images=False,
         )
     except TypeError:
-        # Compatibilidade com versões anteriores do tavily-python.
         resposta = cliente_tavily.extract(
             urls=urls,
             extract_depth="advanced",
-            format="markdown",
+            format="text",
             include_images=False,
         )
 
     paginas: list[PaginaExtraida] = []
+    paginas_adicionadas: set[str] = set()
 
     for resultado in resposta.get(
         "results",
         [],
     ):
-        url = str(
+        url_resultado = str(
             resultado.get(
                 "url",
                 "",
@@ -284,21 +495,50 @@ def extrair_paginas_candidatas(
             or ""
         ).strip()
 
-        candidato = por_url.get(url)
-
-        if candidato is None:
+        if not url_resultado:
             continue
 
         if not conteudo_extraido:
             continue
 
+        if _conteudo_indica_bloqueio(
+            conteudo_extraido
+        ):
+            continue
+
+        chave_resultado = (
+            _normalizar_url_para_comparacao(
+                url_resultado
+            )
+        )
+
+        candidato = por_url_normalizada.get(
+            chave_resultado
+        )
+
+        if candidato is None:
+            continue
+
+        if chave_resultado in paginas_adicionadas:
+            continue
+
+        paginas_adicionadas.add(
+            chave_resultado
+        )
+
         paginas.append(
             PaginaExtraida(
                 titulo=candidato.titulo,
-                url=candidato.url,
-                conteudo_resumo=candidato.conteudo_resumo,
-                conteudo_extraido=conteudo_extraido,
-                pontuacao_busca=candidato.pontuacao,
+                url=url_resultado,
+                conteudo_resumo=(
+                    candidato.conteudo_resumo
+                ),
+                conteudo_extraido=(
+                    conteudo_extraido
+                ),
+                pontuacao_busca=(
+                    candidato.pontuacao
+                ),
             )
         )
 
@@ -332,8 +572,7 @@ def buscar_oferta_no_concorrente(
     """
     Função mantida por compatibilidade com código antigo.
 
-    Retorna a primeira página extraída, mas novos serviços devem usar
-    buscar_e_extrair_paginas() para avaliar todas as candidatas.
+    Novos serviços devem usar buscar_e_extrair_paginas().
     """
 
     paginas = buscar_e_extrair_paginas(

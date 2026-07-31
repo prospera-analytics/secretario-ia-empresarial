@@ -1,10 +1,10 @@
 from decimal import Decimal
 
-from servicos.extracao_precos import analisar_ofertas_produto
+from servicos.extracao_precos import analisar_oferta_produto
 
 
 def melhor(titulo: str, conteudo: str):
-    ofertas = analisar_ofertas_produto(
+    ofertas = analisar_oferta_produto(
         titulo=titulo,
         conteudo=conteudo,
         nome_produto="Apple iPhone 16 128 GB",

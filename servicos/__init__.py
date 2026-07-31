@@ -4,16 +4,23 @@ from servicos.busca_precos import (
     buscar_preco_recente_no_cache,
     consultar_preco_produto_concorrente,
 )
+
 from servicos.extracao_precos import (
-    PrecoExtraido,
-    extrair_preco_oferta,
+    CorrespondenciaProduto,
+    OfertaValidada,
+    TipoCorrespondencia,
+    analisar_oferta_produto,
+    avaliar_correspondencia_produto,
 )
 
 __all__ = [
     "HORAS_CACHE_PRECO",
     "ResultadoConsultaPreco",
-    "PrecoExtraido",
     "buscar_preco_recente_no_cache",
     "consultar_preco_produto_concorrente",
-    "extrair_preco_oferta",
+    "CorrespondenciaProduto",
+    "OfertaValidada",
+    "TipoCorrespondencia",
+    "analisar_oferta_produto",
+    "avaliar_correspondencia_produto",
 ]

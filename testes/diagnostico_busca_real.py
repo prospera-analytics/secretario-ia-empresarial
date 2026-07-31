@@ -7,7 +7,7 @@ from web.tavily import (
     extrair_paginas_candidatas,
 )
 
-from servicos.extracao_precos import analisar_ofertas_produto
+from servicos.extracao_precos import analisar_oferta_produto
 
 
 def main():
@@ -55,7 +55,7 @@ def main():
             print("Título:", pagina.titulo)
             print("URL:", pagina.url)
 
-            ofertas = analisar_ofertas_produto(
+            ofertas = analisar_oferta_produto(
                 titulo=pagina.titulo,
                 conteudo=pagina.conteudo_extraido,
                 nome_produto=produto.nome,
@@ -65,7 +65,7 @@ def main():
 
             print("Ofertas encontradas:", len(ofertas))
 
-            for oferta in ofertas:
+            if oferta is not None:
                 print(oferta)
 
             print()

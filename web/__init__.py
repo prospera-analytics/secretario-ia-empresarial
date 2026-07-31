@@ -1,13 +1,5 @@
-from web.tavily import (
-    MAX_RESULTADOS_BUSCA,
-    PONTUACAO_MINIMA_RESULTADO,
-    buscar_oferta_no_concorrente,
-    cliente_tavily,
-)
+"""
+Integrações web do projeto.
 
-__all__ = [
-    "MAX_RESULTADOS_BUSCA",
-    "PONTUACAO_MINIMA_RESULTADO",
-    "buscar_oferta_no_concorrente",
-    "cliente_tavily",
-]
+Importe as funções diretamente dos módulos responsáveis.
+"""
