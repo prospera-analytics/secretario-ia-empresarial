@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Any
 from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
@@ -563,33 +562,3 @@ def buscar_e_extrair_paginas(
         nome_produto=nome_produto,
     )
 
-
-def buscar_oferta_no_concorrente(
-    nome_produto: str,
-    nome_concorrente: str,
-    dominio_concorrente: str,
-) -> dict[str, Any] | None:
-    """
-    Função mantida por compatibilidade com código antigo.
-
-    Novos serviços devem usar buscar_e_extrair_paginas().
-    """
-
-    paginas = buscar_e_extrair_paginas(
-        nome_produto=nome_produto,
-        nome_concorrente=nome_concorrente,
-        dominio_concorrente=dominio_concorrente,
-    )
-
-    if not paginas:
-        return None
-
-    pagina = paginas[0]
-
-    return {
-        "titulo": pagina.titulo,
-        "url": pagina.url,
-        "conteudo": pagina.conteudo_extraido,
-        "conteudo_resumo": pagina.conteudo_resumo,
-        "pontuacao": pagina.pontuacao_busca,
-    }

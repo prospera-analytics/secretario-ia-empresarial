@@ -11,19 +11,18 @@ from database.models.produto import Produto
 from servicos.busca_precos import (
     consultar_preco_produto_concorrente,
 )
+from servicos.extracao_precos import OfertaValidada
+from web.tavily import PaginaExtraida
 
 
-def testar_busca_web_e_cache() -> None:
+def test_busca_web_salva_no_banco_e_utiliza_cache() -> None:
     """
-    Testa o fluxo completo do serviço sem acessar a internet.
+    Verifica o fluxo principal do serviço:
 
-    O teste verifica que:
-
-    1. Sem preço em cache, a busca web simulada é chamada.
-    2. O preço é extraído e salvo na sessão.
-    3. Uma segunda consulta usa o cache.
-    4. A Tavily não é chamada novamente.
-    5. O rollback remove todos os dados temporários.
+    página extraída
+        → oferta validada
+        → registro no banco
+        → consulta posterior pelo cache
     """
 
     identificador = uuid4().hex[:8]
@@ -31,58 +30,72 @@ def testar_busca_web_e_cache() -> None:
     with SessionLocal() as sessao:
         try:
             produto = Produto(
-                nome=f"Samsung Galaxy S24 Teste {identificador}",
+                nome=(
+                    f"Samsung Galaxy S24 "
+                    f"Teste {identificador}"
+                ),
                 categoria="Smartphone",
                 marca="Samsung",
                 armazenamento_gb=256,
-                descricao="Produto temporário para teste.",
+                descricao=(
+                    "Produto temporário para teste."
+                ),
                 preco_venda=Decimal("5499.90"),
                 ativo=True,
             )
 
             concorrente = Concorrente(
-                nome=f"Loja Teste {identificador}",
-                dominio=f"loja-teste-{identificador}.com.br",
+                nome=f"Amazon Teste {identificador}",
+                dominio=(
+                    f"teste-{identificador}."
+                    "amazon.com.br"
+                ),
                 ativo=True,
             )
 
-            sessao.add_all(
-                [
-                    produto,
-                    concorrente,
-                ]
+            sessao.add_all([produto, concorrente])
+            sessao.flush()
+
+            pagina_simulada = PaginaExtraida(
+                titulo=(
+                    f"Samsung Galaxy S24 Teste "
+                    f"{identificador} 256GB"
+                ),
+                url=(
+                    "https://www.amazon.com.br/"
+                    f"galaxy-s24-{identificador}"
+                ),
+                conteudo_resumo=(
+                    "Samsung Galaxy S24 256GB"
+                ),
+                conteudo_extraido=(
+                    "Samsung Galaxy S24 256GB. "
+                    "Preço à vista: R$ 4.999,90."
+                ),
+                pontuacao_busca=0.91,
             )
 
-            sessao.flush()
-            sessao.refresh(produto)
-            sessao.refresh(concorrente)
+            oferta_simulada = OfertaValidada(
+                preco=Decimal("4999.90"),
+                moeda="BRL",
+                modalidade="avista",
+                correspondencia="exato",
+                confianca=Decimal("1.000"),
+                diferencas=(),
+            )
 
-            resposta_web_simulada = {
-                "titulo": (
-                    "Samsung Galaxy S24 Teste "
-                    f"{identificador} 256GB por "
-                    "R$ 4.999,90 no Pix"
-                ),
-                "url": (
-                    "https://"
-                    f"{concorrente.dominio}"
-                    "/smartphone-galaxy-s24"
-                ),
-                "conteudo": (
-                    "Oferta disponível por R$ 4.999,90 no Pix "
-                    "ou em 10x de R$ 549,99."
-                ),
-                "pontuacao": 0.91,
-            }
-
-            with patch(
-                "servicos.busca_precos."
-                "buscar_oferta_no_concorrente"
-            ) as busca_web_simulada:
-                busca_web_simulada.return_value = (
-                    resposta_web_simulada
-                )
-
+            with (
+                patch(
+                    "servicos.busca_precos."
+                    "buscar_e_extrair_paginas",
+                    return_value=[pagina_simulada],
+                ) as busca_web_simulada,
+                patch(
+                    "servicos.busca_precos."
+                    "analisar_oferta_produto",
+                    return_value=oferta_simulada,
+                ) as analise_simulada,
+            ):
                 resultado_web = (
                     consultar_preco_produto_concorrente(
                         sessao=sessao,
@@ -90,9 +103,6 @@ def testar_busca_web_e_cache() -> None:
                         concorrente_id=concorrente.id,
                     )
                 )
-
-                print("\nResultado da primeira consulta:")
-                print(resultado_web)
 
                 assert resultado_web is not None
                 assert resultado_web.fonte == "web"
@@ -106,14 +116,21 @@ def testar_busca_web_e_cache() -> None:
                     == Decimal("4999.90")
                 )
                 assert resultado_web.moeda == "BRL"
-                assert resultado_web.tipo_correspondencia == "exato"
+                assert (
+                    resultado_web.tipo_correspondencia
+                    == "exato"
+                )
                 assert (
                     resultado_web.similaridade
                     == Decimal("1.000")
                 )
-                assert resultado_web.registro_preco.id is not None
+                assert (
+                    resultado_web.registro_preco.id
+                    is not None
+                )
 
                 busca_web_simulada.assert_called_once()
+                analise_simulada.assert_called_once()
 
                 registros = list(
                     sessao.scalars(
@@ -140,9 +157,6 @@ def testar_busca_web_e_cache() -> None:
                     )
                 )
 
-                print("\nResultado da segunda consulta:")
-                print(resultado_cache)
-
                 assert resultado_cache is not None
                 assert resultado_cache.fonte == "cache"
                 assert (
@@ -154,23 +168,10 @@ def testar_busca_web_e_cache() -> None:
                     == resultado_web.registro_preco.id
                 )
 
-                # Continua sendo apenas uma chamada:
-                # a segunda consulta utilizou o cache.
+                # A segunda consulta deve usar o banco,
+                # sem repetir a busca ou a análise.
                 assert busca_web_simulada.call_count == 1
-
-            print(
-                "\nO fluxo web simulada → extração → banco "
-                "→ cache funcionou corretamente."
-            )
+                assert analise_simulada.call_count == 1
 
         finally:
             sessao.rollback()
-
-            print(
-                "\nRollback executado. "
-                "Nenhum dado de teste foi mantido."
-            )
-
-
-if __name__ == "__main__":
-    testar_busca_web_e_cache()
