@@ -16,6 +16,8 @@ from agente.memoria import (
     normalizar_memoria,
 )
 
+from database.criar_banco import criar_banco
+from database.popular_banco import popular_banco
 
 LIMITE_PERGUNTAS_HISTORICO = 2
 
@@ -143,6 +145,14 @@ def _formatar_erro(
         f"Detalhes técnicos: `{mensagem}`"
     )
 
+@st.cache_resource
+def _inicializar_banco() -> None:
+    """
+    Cria as tabelas e popula o banco apenas quando necessário.
+    """
+
+    criar_banco()
+    popular_banco(limpar=False)
 
 def main() -> None:
     st.set_page_config(
@@ -150,8 +160,12 @@ def main() -> None:
         page_icon="🤖",
         layout="centered",
     )
-
+    
+    _inicializar_banco()
+    
     _inicializar_estado()
+    
+    
 
     st.title(
         "🤖 Secretário IA Empresarial"
@@ -225,7 +239,7 @@ def main() -> None:
                 resposta = resultado["resposta"]
 
                 st.session_state.memoria = (
-                resultado["memoria"]
+                    resultado["memoria"]
                 )
                     
 

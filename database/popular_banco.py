@@ -19,6 +19,7 @@ from database.models import (
 )
 
 
+
 def limpar_dados(sessao: Session) -> None:
     """
     Remove os registros existentes.
@@ -455,6 +456,24 @@ def criar_vendas(
         ),
     ]
 
+def criar_concorrentes() -> list[Concorrente]:
+    """
+    Cria os concorrentes suportados pela aplicação.
+    """
+
+    return [
+        Concorrente(
+            nome="Magazine Luiza",
+            dominio="magazineluiza.com.br",
+            ativo=True,
+        ),
+        Concorrente(
+            nome="Amazon",
+            dominio="amazon.com.br",
+            ativo=True,
+        ),
+    ]
+
 
 def popular_banco(limpar: bool = False) -> None:
     """Popula o banco com dados internos demonstrativos."""
@@ -478,9 +497,11 @@ def popular_banco(limpar: bool = False) -> None:
 
             fornecedores = criar_fornecedores()
             produtos = criar_produtos()
+            concorrentes = criar_concorrentes()
 
             sessao.add_all(fornecedores)
             sessao.add_all(produtos)
+            sessao.add_all(concorrentes)
             sessao.flush()
 
             estoques = criar_estoques(produtos)
@@ -513,14 +534,18 @@ def popular_banco(limpar: bool = False) -> None:
             print(f"Vendas cadastradas: {len(vendas)}")
             print(f"Campanhas cadastradas: {len(campanhas)}")
             print(
-                "As tabelas de concorrentes permanecem vazias "
+                f"Concorrentes cadastrados: {len(concorrentes)}"
+            )
+
+            print(
+                "As ofertas concorrentes permanecem vazias "
                 "até a coleta de dados reais da web."
             )
 
         except Exception:
             sessao.rollback()
             raise
-
+            
 
 def obter_argumentos():
     """Lê os argumentos fornecidos pelo terminal."""
