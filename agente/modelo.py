@@ -21,4 +21,5 @@ def criar_modelo(
         temperature=config.temperatura,
         max_retries=config.max_tentativas,
         timeout=60,
+        max_tokens=1024,
     )

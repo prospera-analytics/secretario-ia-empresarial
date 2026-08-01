@@ -5,9 +5,7 @@ from collections.abc import Iterable
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urlparse
 
-from web.concorrentes import (
-    PrecoExtraido,
-)
+from web.concorrentes import PrecoExtraido
 
 
 _DOMINIOS_AMAZON_BR = {
@@ -15,10 +13,12 @@ _DOMINIOS_AMAZON_BR = {
     "www.amazon.com.br",
 }
 
+
 _PADRAO_ASIN = re.compile(
     r"^[A-Z0-9]{10}$",
     flags=re.IGNORECASE,
 )
+
 
 _PADROES_CAMINHO_PRODUTO = (
     re.compile(
@@ -36,19 +36,17 @@ _PADROES_CAMINHO_PRODUTO = (
 )
 
 
-_VALOR_BRL = (
-    r"(?P<valor>"
+_VALOR_BRL_NUMERICO = (
     r"\d{1,3}"
     r"(?:\.\d{3})*"
     r",\d{2}"
-    r")"
 )
 
 
 _PADRAO_PRECO_A_VISTA_AMAZON = re.compile(
     rf"""
     R\$\s*
-    {_VALOR_BRL}
+    (?P<valor>{_VALOR_BRL_NUMERICO})
 
     (?:
         \s*
@@ -68,7 +66,7 @@ _PADRAO_PRECO_TOTAL_AMAZON = re.compile(
     (?:ou\s*)?
 
     R\$\s*
-    {_VALOR_BRL}
+    (?P<valor>{_VALOR_BRL_NUMERICO})
 
     \s*
     em\s+at[eé]\s+
@@ -78,11 +76,48 @@ _PADRAO_PRECO_TOTAL_AMAZON = re.compile(
 )
 
 
+_PADRAO_PRECO_TOTAL_TABELA_AMAZON = re.compile(
+    rf"""
+    (?:^|\n)
+    \s*
+    \|?
+    \s*
+
+    em\s+
+    \d{{1,2}}\s*x
+
+    \s*
+    (?:de\s*)?
+
+    R\$\s*
+    (?P<parcela>{_VALOR_BRL_NUMERICO})
+
+    \s*
+    (?:sem\s+juros)?
+
+    \s*
+    \|
+
+    \s*
+    R\$\s*
+    (?P<valor>{_VALOR_BRL_NUMERICO})
+
+    \s*
+    \|?
+    """,
+    flags=(
+        re.IGNORECASE
+        | re.VERBOSE
+        | re.MULTILINE
+    ),
+)
+
+
 def _converter_valor_brl(
     valor: str,
 ) -> Decimal | None:
     """
-    Converte valor brasileiro para Decimal.
+    Converte um valor brasileiro para Decimal.
 
     Exemplo:
 
@@ -108,6 +143,11 @@ def _criar_preco_extraido(
     resultado: re.Match[str] | None,
     modalidade: str,
 ) -> PrecoExtraido | None:
+    """
+    Converte o grupo nomeado 'valor' de um regex
+    em PrecoExtraido.
+    """
+
     if resultado is None:
         return None
 
@@ -133,16 +173,27 @@ def extrair_preco_amazon(
     Prioridade:
 
     1. preço explicitamente associado a "à vista";
-    2. preço total explicitamente seguido por "em até Nx".
+    2. preço total seguido por "em até Nx";
+    3. preço total apresentado na segunda coluna da
+       tabela de parcelamento.
 
-    Não captura:
+    Exemplo de tabela reconhecida:
 
-    - valor da parcela;
-    - seguros;
-    - acessórios;
-    - preço de tabela isolado;
-    - valores encontrados em especificações;
-    - descontos calculados.
+    | Em 2x de R$ 2.721,67 sem juros | R$ 5.443,33 |
+
+    Nesse exemplo:
+
+    - R$ 2.721,67 é a parcela;
+    - R$ 5.443,33 é o total explícito.
+
+    O extrator não:
+
+    - multiplica parcelas;
+    - calcula descontos;
+    - captura seguros;
+    - captura acessórios;
+    - usa preço anterior isolado;
+    - infere valores ausentes.
     """
 
     if not isinstance(
@@ -176,8 +227,22 @@ def extrair_preco_amazon(
         )
     )
 
-    return _criar_preco_extraido(
+    preco_total = _criar_preco_extraido(
         resultado=resultado_total,
+        modalidade="preco_total",
+    )
+
+    if preco_total is not None:
+        return preco_total
+
+    resultado_tabela = (
+        _PADRAO_PRECO_TOTAL_TABELA_AMAZON.search(
+            conteudo
+        )
+    )
+
+    return _criar_preco_extraido(
+        resultado=resultado_tabela,
         modalidade="preco_total",
     )
 
@@ -267,7 +332,8 @@ def eh_url_produto_amazon(
     url: str,
 ) -> bool:
     """
-    Retorna True apenas para páginas individuais de produto.
+    Retorna True apenas para páginas individuais
+    de produto da Amazon Brasil.
     """
 
     return (
@@ -308,7 +374,8 @@ def filtrar_urls_produto_amazon(
     urls: Iterable[str],
 ) -> list[str]:
     """
-    Mantém somente URLs individuais de produtos da Amazon Brasil.
+    Mantém somente URLs individuais de produtos
+    da Amazon Brasil.
 
     Também:
 

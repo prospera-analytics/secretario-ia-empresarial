@@ -121,3 +121,21 @@ def test_conteudo_sem_preco() -> None:
     )
 
     assert resultado is None
+    
+def test_extrair_preco_total_tabela_amazon() -> None:
+    conteudo = """
+    | Prazo | Total (R$) |
+    | --- | --- |
+    | Em 2x de R$ 2.721,67 sem juros | R$ 5.443,33 |
+    | Em 3x de R$ 1.814,45 sem juros | R$ 5.443,33 |
+    | Em 12x de R$ 453,62 sem juros | R$ 5.443,33 |
+    """
+
+    resultado = extrair_preco_concorrente(
+        dominio="amazon.com.br",
+        conteudo=conteudo,
+    )
+
+    assert resultado is not None
+    assert resultado.valor == Decimal("5443.33")
+    assert resultado.modalidade == "preco_total"

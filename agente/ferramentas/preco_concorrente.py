@@ -14,6 +14,9 @@ from crud.concorrente import (
 )
 from database.conexao import SessionLocal
 
+from servicos.busca_precos import (
+    consultar_preco_produto_concorrente,
+)
 
 def _converter_decimal(
     valor: float | int | str,
@@ -61,22 +64,29 @@ def _preco_concorrente_para_dict(
 
         preco_interno = float(preco_interno_decimal)
 
-        diferenca = preco - preco_interno_decimal
+    diferenca = (
+        preco_interno_decimal
+        - preco
+    )
 
-        diferenca_valor = float(
-            diferenca.quantize(Decimal("0.01"))
+    diferenca_valor = float(
+        diferenca.quantize(
+            Decimal("0.01")
+        )
+    )
+
+    if preco != 0:
+        percentual = (
+            diferenca
+            / preco
+            * Decimal("100")
         )
 
-        if preco_interno_decimal != 0:
-            percentual = (
-                diferenca
-                / preco_interno_decimal
-                * Decimal("100")
+        diferenca_percentual = float(
+            percentual.quantize(
+                Decimal("0.01")
             )
-
-            diferenca_percentual = float(
-                percentual.quantize(Decimal("0.01"))
-            )
+        )
 
     return {
         "id": oferta.id,
@@ -472,7 +482,83 @@ def marcar_oferta_disponivel(
         return _resposta_erro(erro)
 
 
+@tool
+def buscar_preco_atual_concorrente(
+    produto_id: int,
+    concorrente_id: int,
+    forcar_atualizacao: bool = False,
+) -> dict[str, Any]:
+    """
+    Busca o preço de um produto em um concorrente.
+
+    Primeiro consulta o cache. Quando não houver preço recente,
+    pesquisa o site do concorrente com Tavily, extrai a oferta,
+    salva o resultado no banco e retorna a URL real da página.
+
+    Use forcar_atualizacao=True quando o usuário pedir explicitamente
+    uma atualização ou um preço novo.
+    """
+
+    try:
+        with SessionLocal() as sessao:
+            try:
+                resultado = consultar_preco_produto_concorrente(
+                    sessao=sessao,
+                    produto_id=produto_id,
+                    concorrente_id=concorrente_id,
+                    forcar_atualizacao=forcar_atualizacao,
+                )
+
+                if resultado is None:
+                    return {
+                        "sucesso": True,
+                        "encontrado": False,
+                        "mensagem": (
+                            "Não foi encontrada uma oferta concorrente "
+                            "verificável para esse produto."
+                        ),
+                    }
+
+                sessao.commit()
+
+                return {
+                    "sucesso": True,
+                    "encontrado": True,
+                    "fonte": resultado.fonte,
+                    "produto_id": resultado.produto_id,
+                    "produto_nome": resultado.produto_nome,
+                    "concorrente_id": resultado.concorrente_id,
+                    "concorrente_nome": resultado.concorrente_nome,
+                    "produto_encontrado": resultado.titulo_encontrado,
+                    "preco": float(resultado.preco),
+                    "moeda": resultado.moeda,
+                    "correspondencia": (
+                        resultado.tipo_correspondencia
+                    ),
+                    "similaridade": float(
+                        resultado.similaridade
+                    ),
+                    "url": resultado.url,
+                    "coletado_em": (
+                        resultado.coletado_em.isoformat()
+                        if resultado.coletado_em is not None
+                        else None
+                    ),
+                    "diferencas": list(
+                        resultado.diferencas
+                    ),
+                }
+
+            except Exception:
+                sessao.rollback()
+                raise
+
+    except Exception as erro:
+        return _resposta_erro(erro)
+
+
 FERRAMENTAS_PRECO_CONCORRENTE = [
+    buscar_preco_atual_concorrente,
     registrar_oferta_concorrente,
     consultar_oferta_concorrente_por_id,
     consultar_ofertas_concorrentes,

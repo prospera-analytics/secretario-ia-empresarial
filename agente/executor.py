@@ -2,10 +2,15 @@
 Criação e execução do Secretário IA Empresarial.
 """
 
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from langchain.agents import create_agent
-from langchain_core.messages import BaseMessage
+
+from langchain_core.messages import (
+    BaseMessage,
+    SystemMessage,
+)
+
 from langchain_core.tools import BaseTool
 
 from agente.modelo import criar_modelo
@@ -15,6 +20,14 @@ from agente.roteador import (
     selecionar_ferramentas,
 )
 
+from agente.memoria import (
+    normalizar_memoria,
+    resumir_memoria_para_modelo,
+)
+
+from agente.orquestrador import (
+    executar_fluxo_deterministico,
+)
 
 def criar_agente(
     ferramentas: Sequence[BaseTool] | None = None,
@@ -124,6 +137,35 @@ def extrair_resposta_final(
     return resposta
 
 
+def _nomes_ferramentas_executadas(
+    resultado: dict[str, Any],
+) -> set[str]:
+    """
+    Retorna somente ferramentas realmente executadas.
+    """
+
+    nomes: set[str] = set()
+
+    for mensagem in resultado.get(
+        "messages",
+        [],
+    ):
+        if type(mensagem).__name__ != "ToolMessage":
+            continue
+
+        nome = getattr(
+            mensagem,
+            "name",
+            None,
+        )
+
+        if isinstance(nome, str) and nome:
+            nomes.add(
+                nome
+            )
+
+    return nomes
+
 def executar_agente(
     pergunta: str,
     historico: Sequence[BaseMessage] | None = None,
@@ -156,6 +198,38 @@ def executar_agente(
         ferramentas_selecionadas = list(
             ferramentas
         )
+        
+    pergunta_normalizada = pergunta_limpa.casefold()
+
+    consulta_preco_concorrente = (
+        any(
+            termo in pergunta_normalizada
+            for termo in (
+                "preço",
+                "preco",
+                "valor",
+                "oferta",
+            )
+        )
+        and any(
+            termo in pergunta_normalizada
+            for termo in (
+                "amazon",
+                "magalu",
+                "magazine luiza",
+                "concorrente",
+            )
+        )
+    )
+
+    if (
+        consulta_preco_concorrente
+        and not ferramentas_selecionadas
+    ):
+        raise RuntimeError(
+            "Nenhuma ferramenta de preço concorrente "
+            "foi selecionada pelo roteador."
+        )
 
     mensagens: list[Any] = list(
         historico or []
@@ -178,6 +252,16 @@ def executar_agente(
         {
             "messages": mensagens,
         }
+    )
+    
+    ferramentas_executadas = (
+        _nomes_ferramentas_executadas(
+            resultado
+        )
+    )
+
+    resultado["_ferramentas_executadas"] = sorted(
+        ferramentas_executadas
     )
 
     resultado["_roteamento"] = {
@@ -213,6 +297,123 @@ def conversar(
         resultado
     )
 
+def conversar_com_memoria(
+    pergunta: str,
+    memoria: Mapping[str, Any] | None = None,
+    historico: Sequence[BaseMessage] | None = None,
+    ferramentas: Sequence[BaseTool] | None = None,
+) -> dict[str, Any]:
+    """
+    Executa primeiro os fluxos determinísticos.
+
+    O LLM é usado somente como fallback e recebe apenas:
+    - contexto factual compacto;
+    - no máximo duas perguntas anteriores;
+    - ferramentas selecionadas pelo roteador.
+    """
+
+    pergunta_limpa = pergunta.strip()
+
+    if not pergunta_limpa:
+        raise ValueError(
+            "A pergunta não pode estar vazia."
+        )
+
+    memoria_atual = normalizar_memoria(
+        memoria
+    )
+
+    resultado_deterministico = (
+        executar_fluxo_deterministico(
+            pergunta=pergunta_limpa,
+            memoria=memoria_atual,
+        )
+    )
+
+    if resultado_deterministico.tratado:
+        return {
+            "resposta": (
+                resultado_deterministico.resposta
+                or "Consulta concluída."
+            ),
+            "memoria": (
+                resultado_deterministico.memoria
+            ),
+            "fluxo": (
+                resultado_deterministico.fluxo
+            ),
+            "dados": (
+                resultado_deterministico.dados
+            ),
+            "deterministico": True,
+            "ferramentas_executadas": [],
+        }
+
+    contexto_factual = (
+        resumir_memoria_para_modelo(
+            memoria_atual
+        )
+    )
+
+    historico_reduzido = list(
+        historico or []
+    )[-2:]
+
+    mensagens_fallback: list[BaseMessage] = [
+        SystemMessage(
+            content=contexto_factual,
+        ),
+        *historico_reduzido,
+    ]
+
+    resultado_agente = executar_agente(
+        pergunta=pergunta_limpa,
+        historico=mensagens_fallback,
+        ferramentas=ferramentas,
+    )
+
+    resposta = extrair_resposta_final(
+        resultado_agente
+    )
+
+    ferramentas_executadas = list(
+        resultado_agente.get(
+            "_ferramentas_executadas",
+            [],
+        )
+    )
+
+    ferramentas_disponiveis = list(
+        resultado_agente.get(
+            "_roteamento",
+            {},
+        ).get(
+            "nomes_ferramentas",
+            [],
+        )
+    )
+
+    # Se havia ferramentas empresariais disponíveis, mas nenhuma foi
+    # executada, o modelo não pode fingir que consultou dados.
+    if (
+        ferramentas_disponiveis
+        and not ferramentas_executadas
+    ):
+        resposta = (
+            "Não foi possível confirmar essa informação "
+            "nos dados empresariais disponíveis."
+        )
+
+    return {
+        "resposta": resposta,
+        "memoria": memoria_atual,
+        "fluxo": None,
+        "dados": None,
+        "deterministico": False,
+        "ferramentas_executadas": (
+            ferramentas_executadas
+        ),
+    }
 
 def visualizar_roteamento(
     pergunta: str,
@@ -228,6 +429,7 @@ def visualizar_roteamento(
 
 __all__ = [
     "conversar",
+    "conversar_com_memoria",
     "criar_agente",
     "executar_agente",
     "extrair_resposta_final",

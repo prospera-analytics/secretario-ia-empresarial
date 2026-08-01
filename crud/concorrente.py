@@ -11,6 +11,8 @@ from database.models.produto import Produto
 
 TIPOS_CORRESPONDENCIA_VALIDOS = {
     "exato",
+    "equivalente",
+    "muito_similar",
     "similar",
 }
 
@@ -347,9 +349,10 @@ def registrar_preco_concorrente(
 
     if tipo_limpo not in TIPOS_CORRESPONDENCIA_VALIDOS:
         raise ValueError(
-            "Tipo de correspondência inválido. "
-            "Valores permitidos: exato ou similar."
-        )
+    "Tipo de correspondência inválido. "
+    "Valores permitidos: exato, equivalente, "
+    "muito_similar ou similar."
+)
 
     moeda_limpa = moeda.strip().upper()
 

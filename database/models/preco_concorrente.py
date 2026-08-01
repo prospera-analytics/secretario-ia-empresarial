@@ -36,7 +36,11 @@ class PrecoConcorrente(Base):
             name="ck_preco_concorrente_similaridade_intervalo",
         ),
         CheckConstraint(
-            "tipo_correspondencia IN ('exato', 'similar')",
+            (
+                "tipo_correspondencia IN "
+                "('exato', 'equivalente', "
+                "'muito_similar', 'similar')"
+            ),
             name="ck_preco_concorrente_tipo_correspondencia",
         ),
     )
@@ -85,7 +89,7 @@ class PrecoConcorrente(Base):
     )
 
     tipo_correspondencia: Mapped[str] = mapped_column(
-        String(10),
+        String(20),
         nullable=False,
     )
 

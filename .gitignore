@@ -13,3 +13,6 @@ __pycache__/
 .idea/
 
 database/*.db
+
+.pytest_cache/
+*.bak
