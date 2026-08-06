@@ -1,47 +1,352 @@
-@'
-# Secretário IA Empresarial
+# 🤖 Agente de IA para Apoio à Gestão Comercial
 
-Aplicação desenvolvida em Python e Streamlit para consultar, analisar e relacionar dados operacionais de uma empresa varejista de smartphones.
+Aplicação desenvolvida em Python e Streamlit para apoiar decisões comerciais por meio de um agente de inteligência artificial.
 
-O sistema combina banco de dados, ferramentas empresariais, consultas de preços concorrentes e um agente de inteligência artificial. Fluxos críticos são executados de forma determinística, reduzindo chamadas ao modelo e evitando respostas baseadas em dados não confirmados.
+O agente responde perguntas em linguagem natural sobre:
 
-## Funcionalidades
+- produtos;
+- estoque;
+- vendas;
+- fornecedores;
+- compras;
+- campanhas;
+- preços de concorrentes;
+- risco de ruptura;
+- reposição de produtos;
+- redução de preços.
 
-- Consulta e pesquisa de produtos;
-- Controle e análise de estoque;
-- Consulta de fornecedores e compras;
-- Registro e análise de vendas;
-- Gestão de campanhas;
-- Análises de margem, cobertura de estoque e riscos empresariais;
-- Consulta de preços em concorrentes;
-- Comparação entre preços internos e externos;
-- Exibição da URL original da oferta concorrente;
-- Memória factual da conversa;
-- Roteamento seletivo de ferramentas;
-- Interface conversacional com Streamlit.
+A aplicação combina banco de dados relacional, memória conversacional, ferramentas especializadas, fluxos determinísticos e um modelo de linguagem utilizado como apoio quando não existe um fluxo específico.
 
-## Arquitetura
+---
 
-O projeto separa as responsabilidades em módulos:
+## Demonstração
+
+<p align="center">
+  <img src="assets/comparacao_precos.png" width="48%" alt="Comparação de preços com concorrentes">
+  <img src="assets/analise_reposicao.png" width="48%" alt="Análise de reposição de estoque">
+</p>
+
+---
+
+## Principais funcionalidades
+
+O agente consegue:
+
+- consultar produtos cadastrados;
+- analisar estoque atual e estoque mínimo;
+- identificar produtos com risco de ruptura;
+- consultar vendas recentes;
+- verificar compras pendentes ou atrasadas;
+- recomendar fornecedores para reposição;
+- comparar preços com Amazon e Magazine Luiza;
+- realizar busca e extração de preços na web;
+- armazenar ofertas concorrentes no banco;
+- reutilizar preços recentes por meio de cache;
+- avaliar se vale a pena reduzir um preço;
+- manter o produto e o concorrente no contexto da conversa;
+- conectar informações de diferentes tabelas para responder perguntas empresariais.
+
+### Exemplos de perguntas
+
+```text
+Qual produto apresenta maior risco de ruptura?
+
+De qual fornecedor devemos comprar o Samsung Galaxy S25 Ultra?
+
+Quem oferece a melhor combinação de custo e prazo?
+
+Qual é o preço atual do iPhone 16 128 GB na Amazon?
+
+Como esse preço se compara ao nosso?
+
+Vale a pena reduzir nosso preço?
+
+Compare todos os nossos produtos com produtos equivalentes
+dos concorrentes.
+```
+
+---
+
+## Arquitetura do projeto
+
+```text
+                              Usuário
+                                 │
+                                 ▼
+                     Interface em Streamlit
+                                 │
+                                 ▼
+                    Resolução de contexto
+                (produto, concorrente e referências)
+                                 │
+                                 ▼
+                     Roteador de intenções
+                         │               │
+                         │               │
+                         ▼               ▼
+              Fluxos determinísticos   LLM como fallback
+                         │               │
+                         └───────┬───────┘
+                                 ▼
+                    Ferramentas especializadas
+        ┌────────────────┬──────────────┬─────────────────┐
+        ▼                ▼              ▼                 ▼
+     Estoque          Vendas         Compras         Fornecedores
+        │                │              │                 │
+        └────────────────┴───────┬──────┴─────────────────┘
+                                 ▼
+                       Regras de negócio
+                                 │
+                 ┌───────────────┴────────────────┐
+                 ▼                                ▼
+         Banco de dados                 Busca de concorrentes
+          com SQLAlchemy                Tavily Search/Extract
+                                                   │
+                                                   ▼
+                                      Validação e extração
+                                      Amazon e Magazine Luiza
+                                                   │
+                                                   ▼
+                                      Ofertas salvas no banco
+```
+
+---
+
+## Explicação das etapas
+
+### 1. Interface em Streamlit
+
+O Streamlit fornece a interface de conversa utilizada pelo usuário.
+
+A aplicação recebe a pergunta, exibe o histórico da conversa e apresenta a resposta produzida pelo agente.
+
+### 2. Resolução de contexto
+
+O sistema identifica entidades mencionadas na pergunta, como:
+
+- produto;
+- concorrente;
+- fornecedor;
+- referências a mensagens anteriores.
+
+Exemplo:
+
+```text
+Qual é o preço do iPhone 16 na Amazon?
+Como ele se compara ao nosso?
+```
+
+Na segunda pergunta, o agente reutiliza o produto e o concorrente confirmados anteriormente.
+
+### 3. Roteador de intenções
+
+O roteador identifica o tipo de consulta e seleciona somente as ferramentas necessárias.
+
+Entre as intenções reconhecidas estão:
+
+- consulta de estoque;
+- comparação de preços;
+- análise de reposição;
+- consulta de fornecedores;
+- risco de ruptura;
+- decisão de redução de preço.
+
+### 4. Fluxos determinísticos
+
+Consultas empresariais conhecidas são executadas por regras programadas.
+
+Isso reduz alucinações e garante que cálculos e recomendações sejam baseados nos dados do sistema.
+
+### 5. Modelo de linguagem
+
+O modelo de linguagem é utilizado como fallback para perguntas que não possuem um fluxo determinístico específico.
+
+Ele recebe:
+
+- contexto factual resumido;
+- histórico reduzido;
+- ferramentas selecionadas pelo roteador.
+
+O modelo não deve inventar dados empresariais.
+
+### 6. Ferramentas especializadas
+
+Cada domínio da aplicação possui ferramentas específicas:
+
+- produtos;
+- estoque;
+- fornecedores;
+- compras;
+- vendas;
+- campanhas;
+- concorrentes;
+- análises empresariais.
+
+As ferramentas consultam o banco e retornam resultados estruturados ao agente.
+
+### 7. Banco de dados
+
+O banco relacional contém tabelas relacionadas a:
+
+- produtos;
+- estoque;
+- fornecedores;
+- compras;
+- vendas;
+- campanhas;
+- concorrentes;
+- preços concorrentes.
+
+O banco não é o foco principal do projeto, mas fornece os dados necessários para o agente conectar informações e gerar recomendações.
+
+### 8. Busca de preços na web
+
+Quando não existe uma oferta recente no banco, o sistema:
+
+1. pesquisa o produto no concorrente;
+2. extrai o conteúdo da página;
+3. valida marca, modelo, variante e armazenamento;
+4. rejeita usados, seminovos e produtos diferentes;
+5. extrai o preço publicado;
+6. salva a oferta no banco;
+7. reutiliza o resultado enquanto o cache estiver válido.
+
+Atualmente são suportados:
+
+- Amazon Brasil;
+- Magazine Luiza.
+
+---
+
+## Estrutura do projeto
 
 ```text
 challenge_alura/
-├── agente/
-│   ├── contexto.py
-│   ├── executor.py
-│   ├── ferramentas/
-│   ├── memoria.py
-│   ├── modelo.py
-│   ├── orquestrador.py
-│   ├── prompt.py
-│   └── roteador.py
-├── analises/
-├── crud/
-├── database/
-├── servicos/
-├── testes/
-├── web/
-├── app.py
-├── config.py
+│
+├── agente/                     # Núcleo do agente de IA
+│   ├── executor.py             # Execução do agente e fallback
+│   ├── memoria.py              # Memória factual da conversa
+│   ├── contexto.py             # Resolução de entidades
+│   ├── roteador.py             # Seleção de intenções e ferramentas
+│   ├── orquestrador.py         # Fluxos determinísticos
+│   └── ferramentas/            # Ferramentas disponíveis ao agente
+│
+├── crud/                       # Operações de leitura e escrita no banco
+│
+├── database/                   # Modelos SQLAlchemy e conexão
+│
+├── servicos/                   # Regras de negócio e análises
+│   ├── busca_precos.py
+│   └── extracao_precos.py
+│
+├── web/                        # Busca e extração de dados externos
+│   ├── tavily.py
+│   └── concorrentes/
+│       ├── amazon.py
+│       └── magalu.py
+│
+├── testes/                     # Testes automatizados
+│
+├── assets/                     # Imagens utilizadas no README
+│
+├── app.py                      # Interface Streamlit
 ├── requirements.txt
 └── README.md
+```
+
+---
+
+## Tecnologias utilizadas
+
+- Python
+- Streamlit
+- LangChain
+- Groq
+- SQLAlchemy
+- SQLite
+- Tavily Search
+- Tavily Extract
+- Pytest
+- Regex para extração e validação de preços
+
+---
+
+## Como executar localmente
+
+### 1. Clone o repositório
+
+```bash
+git clone URL_DO_REPOSITORIO
+cd challenge_alura
+```
+
+### 2. Crie o ambiente virtual
+
+```bash
+python -m venv .venv
+```
+
+### 3. Ative o ambiente
+
+Windows:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Linux ou macOS:
+
+```bash
+source .venv/bin/activate
+```
+
+### 4. Instale as dependências
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+### 5. Configure as variáveis de ambiente
+
+Crie um arquivo `.env`:
+
+```env
+GROQ_API_KEY=sua_chave
+TAVILY_API_KEY=sua_chave
+```
+
+### 6. Execute a aplicação
+
+```bash
+streamlit run app.py
+```
+
+---
+
+## Executar os testes
+
+```bash
+python -m pytest -q
+```
+
+---
+
+## Limitações
+
+- A busca de preços depende da disponibilidade dos sites concorrentes.
+- Alterações na estrutura das páginas podem exigir ajustes nos extratores.
+- Os preços externos possuem período de validade definido pelo cache.
+- Atualmente a coleta está limitada à Amazon Brasil e ao Magazine Luiza.
+- As recomendações utilizam dados históricos e devem apoiar, não substituir, a decisão humana.
+
+---
+
+## Próxima etapa
+
+A próxima funcionalidade planejada é a geração de gráficos de vendas ao longo do tempo diretamente pela interface.
+
+---
+
+## Licença
+
+Projeto desenvolvido para fins educacionais, demonstração técnica e portfólio.

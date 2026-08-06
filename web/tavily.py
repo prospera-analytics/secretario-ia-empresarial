@@ -265,6 +265,76 @@ def _expandir_urls_especificas(
 
     return expandidos
 
+_TERMOS_OFERTA_INDESEJADA = (
+    "usado",
+    "usada",
+    "seminovo",
+    "seminova",
+    "recondicionado",
+    "recondicionada",
+    "open box",
+    "mostruario",
+    "mostruário",
+)
+
+
+_FRAGMENTOS_URL_INDESEJADOS = (
+    "/review/",
+    "/reviews/",
+    "/avaliacao/",
+    "/avaliacoes/",
+    "/usado-",
+    "/usados/",
+)
+
+
+def _resultado_busca_indesejado(
+    titulo: str,
+    url: str,
+    conteudo: str,
+) -> bool:
+    """
+    Descarta resultados inadequados para comparação com produtos novos.
+
+    Reviews, avaliações, produtos usados, seminovos e
+    recondicionados não devem entrar na comparação principal.
+    """
+
+    titulo_normalizado = titulo.casefold()
+    url_normalizada = url.casefold()
+    conteudo_normalizado = conteudo.casefold()
+
+    if any(
+        fragmento in url_normalizada
+        for fragmento in _FRAGMENTOS_URL_INDESEJADOS
+    ):
+        return True
+
+    # O título é a evidência mais forte da condição do produto.
+    if any(
+        termo in titulo_normalizado
+        for termo in _TERMOS_OFERTA_INDESEJADA
+    ):
+        return True
+
+    # No resumo, exigimos que o termo apareça acompanhado de
+    # contexto comercial para reduzir falsos positivos.
+    contexto_produto_usado = any(
+        trecho in conteudo_normalizado
+        for trecho in (
+            "produto usado",
+            "produto seminovo",
+            "aparelho usado",
+            "aparelho seminovo",
+            "condição usado",
+            "condicao usado",
+            "condição seminovo",
+            "condicao seminovo",
+            "produto recondicionado",
+        )
+    )
+
+    return contexto_produto_usado
 
 def buscar_paginas_candidatas(
     nome_produto: str,
@@ -275,15 +345,24 @@ def buscar_paginas_candidatas(
     """
     Encontra páginas candidatas no domínio do concorrente.
 
+    Prioriza páginas comerciais de produtos novos e exclui
+    reviews, avaliações, usados, seminovos e recondicionados.
+
     Esta função não interpreta preços e não acessa o banco.
     """
 
-    if not nome_produto.strip():
+    nome_produto_limpo = nome_produto.strip()
+    nome_concorrente_limpo = (
+        nome_concorrente.strip()
+    )
+    dominio_limpo = dominio_concorrente.strip()
+
+    if not nome_produto_limpo:
         raise ValueError(
             "O nome do produto não pode estar vazio."
         )
 
-    if not dominio_concorrente.strip():
+    if not dominio_limpo:
         raise ValueError(
             "O domínio do concorrente não pode estar vazio."
         )
@@ -294,19 +373,23 @@ def buscar_paginas_candidatas(
         )
 
     dominio_normalizado = _normalizar_dominio(
-        dominio_concorrente
+        dominio_limpo
     )
 
+    # As exclusões ajudam a busca a evitar páginas que serão
+    # necessariamente rejeitadas pela validação posterior.
     consulta = (
-        f'"{nome_produto}" '
-        f'{nome_concorrente} '
-        f'preço comprar'
+        f'"{nome_produto_limpo}" '
+        f'{nome_concorrente_limpo} '
+        f'novo lacrado preço comprar '
+        f'-usado -seminovo -recondicionado '
+        f'-review -avaliação'
     )
 
     resposta = cliente_tavily.search(
         query=consulta,
         topic="general",
-        search_depth="basic",
+        search_depth="advanced",
         max_results=min(
             max_resultados,
             MAX_RESULTADOS_BUSCA,
@@ -332,6 +415,7 @@ def buscar_paginas_candidatas(
                 "title",
                 "",
             )
+            or ""
         ).strip()
 
         url = str(
@@ -339,6 +423,7 @@ def buscar_paginas_candidatas(
                 "url",
                 "",
             )
+            or ""
         ).strip()
 
         conteudo = str(
@@ -346,6 +431,7 @@ def buscar_paginas_candidatas(
                 "content",
                 "",
             )
+            or ""
         ).strip()
 
         try:
@@ -356,7 +442,11 @@ def buscar_paginas_candidatas(
                 )
                 or 0
             )
-        except (TypeError, ValueError):
+
+        except (
+            TypeError,
+            ValueError,
+        ):
             pontuacao = 0.0
 
         if not titulo or not url:
@@ -371,6 +461,13 @@ def buscar_paginas_candidatas(
         ):
             continue
 
+        if _resultado_busca_indesejado(
+            titulo=titulo,
+            url=url,
+            conteudo=conteudo,
+        ):
+            continue
+
         url_normalizada = (
             _normalizar_url_especifica_concorrente(
                 url
@@ -382,8 +479,19 @@ def buscar_paginas_candidatas(
 
         url = url_normalizada
 
-        chave_url = _normalizar_url_para_comparacao(
-            url
+        # A normalização específica pode transformar a URL.
+        # Por isso fazemos uma segunda validação.
+        if _resultado_busca_indesejado(
+            titulo=titulo,
+            url=url,
+            conteudo=conteudo,
+        ):
+            continue
+
+        chave_url = (
+            _normalizar_url_para_comparacao(
+                url
+            )
         )
 
         if chave_url in urls_adicionadas:

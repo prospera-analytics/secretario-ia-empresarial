@@ -12,7 +12,7 @@ from copy import deepcopy
 from typing import Any, Mapping
 
 
-VERSAO_MEMORIA = 2
+VERSAO_MEMORIA = 1
 
 
 def criar_memoria_vazia() -> dict[str, Any]:
@@ -26,9 +26,6 @@ def criar_memoria_vazia() -> dict[str, Any]:
         "concorrente": None,
         "ultima_oferta": None,
         "ultima_comparacao": None,
-        "ultima_analise_reposicao": None,
-        "ultimo_fornecedor_recomendado": None,
-        "ultima_compra_pendente": None,
         "ultimo_fluxo": None,
         "ultima_intencao": None,
     }
@@ -54,9 +51,6 @@ def normalizar_memoria(
         "concorrente",
         "ultima_oferta",
         "ultima_comparacao",
-        "ultima_analise_reposicao",
-        "ultimo_fornecedor_recomendado",
-        "ultima_compra_pendente",
     ):
         valor = memoria.get(campo)
 
@@ -305,288 +299,6 @@ def registrar_comparacao(
     return memoria_atualizada
 
 
-
-def registrar_analise_reposicao(
-    memoria: Mapping[str, Any] | None,
-    resultado_ferramenta: Mapping[str, Any],
-) -> dict[str, Any]:
-    """
-    Registra fatos confirmados por uma análise de reposição.
-
-    Espera o retorno real da ferramenta
-    recomendar_fornecedor_para_reposicao.
-    """
-
-    if not isinstance(
-        resultado_ferramenta,
-        Mapping,
-    ):
-        raise TypeError(
-            "O resultado da análise precisa ser um mapeamento."
-        )
-
-    if resultado_ferramenta.get("sucesso") is not True:
-        return normalizar_memoria(
-            memoria
-        )
-
-    analise = resultado_ferramenta.get(
-        "analise"
-    )
-
-    if not isinstance(analise, Mapping):
-        return normalizar_memoria(
-            memoria
-        )
-
-    produto_id = analise.get(
-        "produto_id"
-    )
-
-    produto_nome = analise.get(
-        "produto_nome"
-    )
-
-    if (
-        not isinstance(produto_id, int)
-        or produto_id <= 0
-        or not isinstance(produto_nome, str)
-        or not produto_nome.strip()
-    ):
-        return normalizar_memoria(
-            memoria
-        )
-
-    memoria_atualizada = normalizar_memoria(
-        memoria
-    )
-
-    produto_anterior = memoria_atualizada.get(
-        "produto"
-    )
-
-    # Preserva detalhes já conhecidos do produto e atualiza ID/nome.
-    produto_memoria: dict[str, Any] = {}
-
-    if isinstance(produto_anterior, Mapping):
-        produto_memoria.update(
-            dict(produto_anterior)
-        )
-
-    produto_memoria.update(
-        {
-            "id": produto_id,
-            "nome": produto_nome.strip(),
-        }
-    )
-
-    memoria_atualizada["produto"] = (
-        produto_memoria
-    )
-
-    memoria_atualizada[
-        "ultima_analise_reposicao"
-    ] = {
-        "produto_id": produto_id,
-        "produto_nome": produto_nome.strip(),
-        "estoque_atual": analise.get(
-            "estoque_atual"
-        ),
-        "unidades_pendentes": analise.get(
-            "unidades_pendentes"
-        ),
-        "estoque_projetado_com_pendencias": (
-            analise.get(
-                "estoque_projetado_com_pendencias"
-            )
-        ),
-        "quantidade_reposicao_original": (
-            analise.get(
-                "quantidade_reposicao_original"
-            )
-        ),
-        "quantidade_a_comprar_apos_pendencias": (
-            analise.get(
-                "quantidade_a_comprar_apos_pendencias"
-            )
-        ),
-        "compra_adicional_necessaria": (
-            analise.get(
-                "compra_adicional_necessaria"
-            )
-        ),
-        "media_vendas_diaria": analise.get(
-            "media_vendas_diaria"
-        ),
-        "criterio_recomendacao": analise.get(
-            "criterio_recomendacao"
-        ),
-        "observacao_preco": analise.get(
-            "observacao_preco"
-        ),
-    }
-
-    melhor_fornecedor = analise.get(
-        "melhor_fornecedor"
-    )
-
-    if isinstance(
-        melhor_fornecedor,
-        Mapping,
-    ):
-        fornecedor_id = melhor_fornecedor.get(
-            "fornecedor_id"
-        )
-
-        fornecedor_nome = melhor_fornecedor.get(
-            "fornecedor_nome"
-        )
-
-        if (
-            isinstance(fornecedor_id, int)
-            and fornecedor_id > 0
-            and isinstance(fornecedor_nome, str)
-            and fornecedor_nome.strip()
-        ):
-            memoria_atualizada[
-                "ultimo_fornecedor_recomendado"
-            ] = {
-                "id": fornecedor_id,
-                "nome": fornecedor_nome.strip(),
-                "cidade": melhor_fornecedor.get(
-                    "cidade"
-                ),
-                "estado": melhor_fornecedor.get(
-                    "estado"
-                ),
-                "prazo_entrega_dias": (
-                    melhor_fornecedor.get(
-                        "prazo_entrega_dias"
-                    )
-                ),
-                "preco_historico_referencia": (
-                    melhor_fornecedor.get(
-                        "preco_historico_referencia"
-                    )
-                ),
-                "data_preco_referencia": (
-                    melhor_fornecedor.get(
-                        "data_preco_referencia"
-                    )
-                ),
-                "compra_referencia_id": (
-                    melhor_fornecedor.get(
-                        "compra_referencia_id"
-                    )
-                ),
-            }
-
-    compras_pendentes = analise.get(
-        "compras_pendentes"
-    )
-
-    if isinstance(compras_pendentes, list):
-        compras_validas = [
-            compra
-            for compra in compras_pendentes
-            if isinstance(compra, Mapping)
-        ]
-
-        if compras_validas:
-            # Prioriza uma compra atrasada; se não houver,
-            # usa a primeira compra pendente confirmada.
-            compra_prioritaria = next(
-                (
-                    compra
-                    for compra in compras_validas
-                    if compra.get(
-                        "entrega_atrasada"
-                    ) is True
-                ),
-                compras_validas[0],
-            )
-
-            fornecedor_atual = (
-                memoria_atualizada.get(
-                    "ultimo_fornecedor_recomendado"
-                )
-            )
-
-            fornecedor_nome = None
-
-            if isinstance(
-                fornecedor_atual,
-                Mapping,
-            ):
-                if (
-                    fornecedor_atual.get("id")
-                    == compra_prioritaria.get(
-                        "fornecedor_id"
-                    )
-                ):
-                    fornecedor_nome = (
-                        fornecedor_atual.get(
-                            "nome"
-                        )
-                    )
-
-            memoria_atualizada[
-                "ultima_compra_pendente"
-            ] = {
-                "id": compra_prioritaria.get(
-                    "compra_id"
-                ),
-                "produto_id": produto_id,
-                "produto_nome": produto_nome.strip(),
-                "fornecedor_id": (
-                    compra_prioritaria.get(
-                        "fornecedor_id"
-                    )
-                ),
-                "fornecedor_nome": fornecedor_nome,
-                "quantidade": compra_prioritaria.get(
-                    "quantidade"
-                ),
-                "preco_unitario": (
-                    compra_prioritaria.get(
-                        "preco_unitario"
-                    )
-                ),
-                "data_compra": (
-                    compra_prioritaria.get(
-                        "data_compra"
-                    )
-                ),
-                "previsao_entrega": (
-                    compra_prioritaria.get(
-                        "previsao_entrega"
-                    )
-                ),
-                "dias_ate_entrega": (
-                    compra_prioritaria.get(
-                        "dias_ate_entrega"
-                    )
-                ),
-                "entrega_atrasada": (
-                    compra_prioritaria.get(
-                        "entrega_atrasada"
-                    )
-                ),
-                "status": compra_prioritaria.get(
-                    "status"
-                ),
-            }
-
-    memoria_atualizada["ultimo_fluxo"] = (
-        "recomendar_fornecedor_reposicao"
-    )
-
-    memoria_atualizada["ultima_intencao"] = (
-        "recomendar_fornecedor"
-    )
-
-    return memoria_atualizada
-
 def registrar_fluxo(
     memoria: Mapping[str, Any] | None,
     fluxo: str,
@@ -709,76 +421,6 @@ def resumir_memoria_para_modelo(
             )
         )
 
-
-    analise_reposicao = memoria_atual.get(
-        "ultima_analise_reposicao"
-    )
-
-    if isinstance(
-        analise_reposicao,
-        Mapping,
-    ):
-        linhas.append(
-            (
-                "- Última análise de reposição confirmada: "
-                f"produto_id="
-                f"{analise_reposicao.get('produto_id')}; "
-                f"produto="
-                f"{analise_reposicao.get('produto_nome')}; "
-                f"estoque atual="
-                f"{analise_reposicao.get('estoque_atual')}; "
-                f"unidades pendentes="
-                f"{analise_reposicao.get('unidades_pendentes')}; "
-                f"estoque projetado="
-                f"{analise_reposicao.get('estoque_projetado_com_pendencias')}; "
-                f"compra adicional necessária="
-                f"{analise_reposicao.get('compra_adicional_necessaria')}; "
-                f"quantidade a comprar="
-                f"{analise_reposicao.get('quantidade_a_comprar_apos_pendencias')}."
-            )
-        )
-
-    fornecedor = memoria_atual.get(
-        "ultimo_fornecedor_recomendado"
-    )
-
-    if isinstance(fornecedor, Mapping):
-        linhas.append(
-            (
-                "- Último fornecedor confirmado na análise: "
-                f"id={fornecedor.get('id')}; "
-                f"nome={fornecedor.get('nome')}; "
-                f"prazo={fornecedor.get('prazo_entrega_dias')} dias; "
-                f"preço histórico="
-                f"{fornecedor.get('preco_historico_referencia')}; "
-                f"data do preço="
-                f"{fornecedor.get('data_preco_referencia')}."
-            )
-        )
-
-    compra_pendente = memoria_atual.get(
-        "ultima_compra_pendente"
-    )
-
-    if isinstance(compra_pendente, Mapping):
-        linhas.append(
-            (
-                "- Última compra pendente confirmada: "
-                f"id={compra_pendente.get('id')}; "
-                f"produto={compra_pendente.get('produto_nome')}; "
-                f"fornecedor_id="
-                f"{compra_pendente.get('fornecedor_id')}; "
-                f"fornecedor="
-                f"{compra_pendente.get('fornecedor_nome')}; "
-                f"quantidade="
-                f"{compra_pendente.get('quantidade')}; "
-                f"previsão="
-                f"{compra_pendente.get('previsao_entrega')}; "
-                f"atrasada="
-                f"{compra_pendente.get('entrega_atrasada')}."
-            )
-        )
-    
     ultimo_fluxo = memoria_atual.get(
         "ultimo_fluxo"
     )
@@ -817,5 +459,4 @@ __all__ = [
     "registrar_oferta",
     "registrar_produto",
     "resumir_memoria_para_modelo",
-    "registrar_analise_reposicao",
 ]

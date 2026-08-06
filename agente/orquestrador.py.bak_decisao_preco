@@ -15,15 +15,9 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Literal, Mapping
 
-from analises.margem import (
-    analisar_margem_produto,
-)
-
 from crud.concorrente import (
-    listar_concorrentes,
     listar_precos_concorrentes,
 )
-
 from crud.produto import listar_produtos
 from database.models.preco_concorrente import (
     PrecoConcorrente,
@@ -55,7 +49,6 @@ TipoFluxo = Literal[
     "comparar_catalogo_concorrentes",
     "listar_produtos_equivalentes",
     "filtrar_comparacoes_catalogo",
-    "avaliar_reducao_preco",
 ]
 
 
@@ -199,19 +192,6 @@ _TERMOS_CATALOGO_COMPLETO = {
 }
 
 
-_TERMOS_ESCOPO_GLOBAL_PRODUTOS = {
-    "algum produto",
-    "alguns produtos",
-    "qual produto",
-    "quais produtos",
-    "existe algum produto",
-    "existe produto",
-    "entre nossos produtos",
-    "entre os nossos produtos",
-    "do nosso catalogo",
-    "no nosso catalogo",
-}
-
 _TERMOS_EQUIVALENCIA = {
     "em comum",
     "comuns",
@@ -234,44 +214,6 @@ _TERMOS_PRECO_INTERNO = {
     "quanto vendemos",
     "nosso valor",
     "catalogo",
-}
-
-_TERMOS_DECISAO_REDUCAO_PRECO = {
-    "vale a pena reduzir nosso preco",
-    "vale a pena baixar nosso preco",
-    "devemos reduzir nosso preco",
-    "devemos baixar nosso preco",
-    "deveriamos reduzir nosso preco",
-    "deveriamos baixar nosso preco",
-    "podemos reduzir nosso preco",
-    "podemos baixar nosso preco",
-    "compensa reduzir nosso preco",
-    "compensa baixar nosso preco",
-    "igualar o preco",
-    "acompanhar o preco do concorrente",
-    "reduzir o preco para competir",
-    "baixar o preco para competir",
-}
-
-
-_TERMOS_REDUCAO_PRECO = {
-    "reduzir",
-    "baixar",
-    "diminuir",
-    "desconto",
-    "igualar",
-    "acompanhar",
-}
-
-
-_TERMOS_DECISAO_PRECO = {
-    "vale a pena",
-    "devemos",
-    "deveriamos",
-    "podemos",
-    "compensa",
-    "recomenda",
-    "recomendaria",
 }
 
 def normalizar_texto(
@@ -322,84 +264,6 @@ def _contem_algum(
         termo in texto
         for termo in termos
     )
-
-
-def _eh_decisao_reducao_preco(
-    texto: str,
-    memoria: Mapping[str, Any] | None,
-) -> bool:
-    """
-    Detecta uma continuação que pede decisão sobre redução de preço.
-
-    O fluxo somente é aceito quando existe uma comparação concorrencial
-    confirmada na memória.
-    """
-
-    if not isinstance(memoria, Mapping):
-        return False
-
-    comparacao = memoria.get(
-        "ultima_comparacao"
-    )
-
-    if not isinstance(comparacao, Mapping):
-        return False
-
-    produto_id = comparacao.get(
-        "produto_id"
-    )
-
-    preco_interno = comparacao.get(
-        "preco_interno"
-    )
-
-    preco_concorrente = comparacao.get(
-        "preco_concorrente"
-    )
-
-    possui_comparacao_valida = (
-        isinstance(produto_id, int)
-        and produto_id > 0
-        and isinstance(
-            preco_interno,
-            (int, float),
-        )
-        and isinstance(
-            preco_concorrente,
-            (int, float),
-        )
-    )
-
-    if not possui_comparacao_valida:
-        return False
-
-    if _contem_algum(
-        texto,
-        _TERMOS_DECISAO_REDUCAO_PRECO,
-    ):
-        return True
-
-    possui_reducao = _contem_algum(
-        texto,
-        _TERMOS_REDUCAO_PRECO,
-    )
-
-    possui_decisao = _contem_algum(
-        texto,
-        _TERMOS_DECISAO_PRECO,
-    )
-
-    menciona_preco = (
-        "preco" in texto
-        or "valor" in texto
-    )
-
-    return (
-        possui_reducao
-        and possui_decisao
-        and menciona_preco
-    )
-
 
 def _obter_ultimo_fluxo(
     memoria: Mapping[str, Any] | None,
@@ -488,11 +352,6 @@ def detectar_fluxo(
         texto,
         _TERMOS_CATALOGO_COMPLETO,
     )
-    
-    possui_escopo_global_produtos = _contem_algum(
-        texto,
-        _TERMOS_ESCOPO_GLOBAL_PRODUTOS,
-    )
 
     possui_equivalencia = _contem_algum(
         texto,
@@ -529,26 +388,15 @@ def detectar_fluxo(
         and contexto.concorrente is not None
     )
 
-
-    if _eh_decisao_reducao_preco(
-        texto=texto,
-        memoria=memoria,
-    ):
-        return "avaliar_reducao_preco"
-
     # Continuação de uma comparação ampla:
     # “Mostre só onde somos mais baratos.”
     if (
         pediu_mais_baratos
         or pediu_mais_caros
-    ) and (
-        possui_escopo_global_produtos
-        or possui_catalogo_completo
-        or ultimo_fluxo in {
-            "comparar_catalogo_concorrentes",
-            "filtrar_comparacoes_catalogo",
-        }
-    ):
+    ) and ultimo_fluxo in {
+        "comparar_catalogo_concorrentes",
+        "filtrar_comparacoes_catalogo",
+    }:
         return "filtrar_comparacoes_catalogo"
 
     # “Quais produtos temos em comum com a Amazon?”
@@ -655,22 +503,6 @@ def _formatar_brl(
 
     return f"R$ {texto}"
 
-def _formatar_brl_markdown(
-    valor: Decimal | float | int,
-) -> str:
-    """
-    Formata moeda brasileira escapando o cifrão para Markdown.
-
-    Use em frases corridas que podem conter mais de um valor monetário,
-    evitando que o Streamlit interprete o trecho entre cifrões como LaTeX.
-    """
-
-    return _formatar_brl(
-        valor
-    ).replace(
-        "$",
-        r"\$",
-    )
 
 def _formatar_percentual(
     valor: Decimal,
@@ -1204,182 +1036,8 @@ def _consultar_preco_interno(
         },
     )
 
-def _coletar_ofertas_catalogo() -> dict[str, Any]:
-    """
-    Completa os preços concorrentes do catálogo.
 
-    Para cada combinação entre produto e concorrente ativo:
-
-    - reutiliza uma oferta recente do cache, quando existir;
-    - consulta a web quando não houver cache válido;
-    - valida a correspondência do produto;
-    - salva no banco somente ofertas verificáveis;
-    - mantém o processamento mesmo quando uma busca falhar.
-
-    Atualmente, com 10 produtos e 2 concorrentes, são analisadas
-    no máximo 20 combinações. As consultas com cache não geram
-    nova busca externa.
-    """
-
-    with SessionLocal() as sessao:
-        produtos = listar_produtos(
-            sessao=sessao,
-            apenas_ativos=True,
-        )
-
-        concorrentes = listar_concorrentes(
-            sessao=sessao,
-            apenas_ativos=True,
-        )
-
-        # Copiamos somente os dados necessários para que rollbacks
-        # durante uma busca não afetem os objetos SQLAlchemy.
-        produtos_dados = [
-            {
-                "id": produto.id,
-                "nome": produto.nome,
-            }
-            for produto in produtos
-        ]
-
-        concorrentes_dados = [
-            {
-                "id": concorrente.id,
-                "nome": concorrente.nome,
-                "dominio": concorrente.dominio,
-            }
-            for concorrente in concorrentes
-        ]
-
-        ofertas_cache: list[dict[str, Any]] = []
-        ofertas_web: list[dict[str, Any]] = []
-        nao_encontradas: list[dict[str, Any]] = []
-        falhas: list[dict[str, Any]] = []
-
-        for produto in produtos_dados:
-            for concorrente in concorrentes_dados:
-                try:
-                    resultado = (
-                        consultar_preco_produto_concorrente(
-                            sessao=sessao,
-                            produto_id=produto["id"],
-                            concorrente_id=(
-                                concorrente["id"]
-                            ),
-                            forcar_atualizacao=False,
-                        )
-                    )
-
-                    if resultado is None:
-                        sessao.rollback()
-
-                        nao_encontradas.append(
-                            {
-                                "produto_id": produto["id"],
-                                "produto_nome": produto["nome"],
-                                "concorrente_id": (
-                                    concorrente["id"]
-                                ),
-                                "concorrente_nome": (
-                                    concorrente["nome"]
-                                ),
-                                "motivo": (
-                                    "Nenhuma oferta verificável "
-                                    "foi encontrada."
-                                ),
-                            }
-                        )
-
-                        continue
-
-                    # A função de serviço adiciona ofertas novas à
-                    # sessão; o commit garante a persistência.
-                    sessao.commit()
-
-                    oferta_resumida = {
-                        "produto_id": resultado.produto_id,
-                        "produto_nome": resultado.produto_nome,
-                        "concorrente_id": (
-                            resultado.concorrente_id
-                        ),
-                        "concorrente_nome": (
-                            resultado.concorrente_nome
-                        ),
-                        "produto_encontrado": (
-                            resultado.titulo_encontrado
-                        ),
-                        "preco": float(
-                            resultado.preco
-                        ),
-                        "correspondencia": (
-                            resultado.tipo_correspondencia
-                        ),
-                        "url": resultado.url,
-                        "fonte": resultado.fonte,
-                    }
-
-                    if resultado.fonte == "cache":
-                        ofertas_cache.append(
-                            oferta_resumida
-                        )
-                    else:
-                        ofertas_web.append(
-                            oferta_resumida
-                        )
-
-                except Exception as erro:
-                    sessao.rollback()
-
-                    falhas.append(
-                        {
-                            "produto_id": produto["id"],
-                            "produto_nome": produto["nome"],
-                            "concorrente_id": (
-                                concorrente["id"]
-                            ),
-                            "concorrente_nome": (
-                                concorrente["nome"]
-                            ),
-                            "erro": str(erro),
-                        }
-                    )
-
-        quantidade_combinacoes = (
-            len(produtos_dados)
-            * len(concorrentes_dados)
-        )
-
-        return {
-            "quantidade_produtos": len(
-                produtos_dados
-            ),
-            "quantidade_concorrentes": len(
-                concorrentes_dados
-            ),
-            "quantidade_combinacoes": (
-                quantidade_combinacoes
-            ),
-            "quantidade_cache": len(
-                ofertas_cache
-            ),
-            "quantidade_web": len(
-                ofertas_web
-            ),
-            "quantidade_nao_encontradas": len(
-                nao_encontradas
-            ),
-            "quantidade_falhas": len(
-                falhas
-            ),
-            "ofertas_cache": ofertas_cache,
-            "ofertas_web": ofertas_web,
-            "nao_encontradas": nao_encontradas,
-            "falhas": falhas,
-        }
-
-def _comparar_catalogo_concorrentes(
-    coletar_web: bool = True,
-) -> tuple[
+def _comparar_catalogo_concorrentes() -> tuple[
     str,
     dict[str, Any],
 ]:
@@ -1387,26 +1045,8 @@ def _comparar_catalogo_concorrentes(
     Compara produtos internos somente com ofertas verificadas
     e armazenadas no banco.
 
-    Completa primeiro as ofertas ausentes ou desatualizadas,
-    reutilizando o cache sempre que possível.
+    Não realiza buscas web em lote.
     """
-
-    if coletar_web:
-            coleta = _coletar_ofertas_catalogo()
-    else:
-        coleta = {
-            "quantidade_produtos": 0,
-            "quantidade_concorrentes": 0,
-            "quantidade_combinacoes": 0,
-            "quantidade_cache": 0,
-            "quantidade_web": 0,
-            "quantidade_nao_encontradas": 0,
-            "quantidade_falhas": 0,
-            "ofertas_cache": [],
-            "ofertas_web": [],
-            "nao_encontradas": [],
-            "falhas": [],
-        }
 
     with SessionLocal() as sessao:
         produtos = listar_produtos(
@@ -1492,7 +1132,6 @@ def _comparar_catalogo_concorrentes(
                 ),
                 "quantidade_comparacoes": 0,
                 "comparacoes": [],
-                "coleta": coleta,
             },
         )
 
@@ -1568,44 +1207,6 @@ def _comparar_catalogo_concorrentes(
 
         linhas.append("")
 
-
-    if coletar_web:
-        linhas.extend(
-            [
-                "## Resumo da coleta",
-                "",
-                (
-                    f"- Produtos analisados: "
-                    f"{coleta['quantidade_produtos']}"
-                ),
-                (
-                    f"- Concorrentes consultados: "
-                    f"{coleta['quantidade_concorrentes']}"
-                ),
-                (
-                    f"- Combinações analisadas: "
-                    f"{coleta['quantidade_combinacoes']}"
-                ),
-                (
-                    f"- Ofertas reutilizadas do cache: "
-                    f"{coleta['quantidade_cache']}"
-                ),
-                (
-                    f"- Novas ofertas coletadas e salvas: "
-                    f"{coleta['quantidade_web']}"
-                ),
-                (
-                    f"- Combinações sem oferta verificável: "
-                    f"{coleta['quantidade_nao_encontradas']}"
-                ),
-                (
-                    f"- Falhas técnicas: "
-                    f"{coleta['quantidade_falhas']}"
-                ),
-                "",
-            ]
-        )
-    
     quantidade_sem_comparacao = (
         len(produtos_dados)
         - len(produtos_com_comparacao)
@@ -1642,7 +1243,6 @@ def _comparar_catalogo_concorrentes(
                 comparacoes
             ),
             "comparacoes": comparacoes,
-            "coleta": coleta,
         },
     )
 
@@ -1765,9 +1365,7 @@ def _filtrar_comparacoes_catalogo(
     )
 
     _, dados_catalogo = (
-        _comparar_catalogo_concorrentes(
-            coletar_web=False
-        )
+        _comparar_catalogo_concorrentes()
     )
 
     comparacoes = list(
@@ -1929,353 +1527,6 @@ def _filtrar_comparacoes_catalogo(
     )
 
 
-
-def _avaliar_reducao_preco(
-    memoria: Mapping[str, Any],
-    margem_minima_percentual: Decimal = Decimal("10"),
-) -> tuple[str, dict[str, Any]]:
-    """
-    Avalia se vale a pena reduzir o preço do último produto comparado.
-
-    Usa somente:
-    - última comparação concorrencial confirmada;
-    - custo histórico registrado no banco;
-    - análise determinística de margem.
-    """
-
-    comparacao = memoria.get(
-        "ultima_comparacao"
-    )
-
-    if not isinstance(comparacao, Mapping):
-        return (
-            (
-                "Não existe uma comparação concorrencial confirmada "
-                "para avaliar uma redução de preço."
-            ),
-            {
-                "avaliacao_disponivel": False,
-                "motivo": "comparacao_ausente",
-            },
-        )
-
-    produto_id = comparacao.get(
-        "produto_id"
-    )
-
-    produto_nome = comparacao.get(
-        "produto_nome"
-    )
-
-    concorrente_nome = comparacao.get(
-        "concorrente_nome"
-    )
-
-    preco_interno = Decimal(
-        str(
-            comparacao.get(
-                "preco_interno"
-            )
-        )
-    )
-
-    preco_concorrente = Decimal(
-        str(
-            comparacao.get(
-                "preco_concorrente"
-            )
-        )
-    )
-
-    if (
-        not isinstance(produto_id, int)
-        or produto_id <= 0
-    ):
-        return (
-            "A última comparação não possui um produto válido.",
-            {
-                "avaliacao_disponivel": False,
-                "motivo": "produto_invalido",
-            },
-        )
-
-    diferenca = (
-        preco_interno
-        - preco_concorrente
-    ).quantize(
-        Decimal("0.01"),
-        rounding=ROUND_HALF_UP,
-    )
-
-    # Nossa loja já está igual ou abaixo do concorrente.
-    if diferenca <= 0:
-        resposta = (
-            f"**{produto_nome}**\n\n"
-            "Não é necessário reduzir o preço para acompanhar "
-            f"a {concorrente_nome}.\n\n"
-            f"- Nosso preço: {_formatar_brl(preco_interno)}\n"
-            f"- {concorrente_nome}: "
-            f"{_formatar_brl(preco_concorrente)}\n"
-        )
-
-        if diferenca < 0:
-            resposta += (
-                "- Nosso preço já está "
-                f"{_formatar_brl(abs(diferenca))} abaixo."
-            )
-        else:
-            resposta += "- Os preços já são iguais."
-
-        return (
-            resposta,
-            {
-                "avaliacao_disponivel": True,
-                "produto_id": produto_id,
-                "produto_nome": produto_nome,
-                "preco_interno": float(
-                    preco_interno
-                ),
-                "preco_concorrente": float(
-                    preco_concorrente
-                ),
-                "reducao_recomendada": False,
-                "motivo": (
-                    "preco_interno_igual_ou_menor"
-                ),
-            },
-        )
-
-    desconto_necessario = (
-        diferenca
-        / preco_interno
-        * Decimal("100")
-    ).quantize(
-        Decimal("0.01"),
-        rounding=ROUND_HALF_UP,
-    )
-
-    with SessionLocal() as sessao:
-        analise = analisar_margem_produto(
-            sessao=sessao,
-            produto_id=produto_id,
-            desconto_percentual=float(
-                desconto_necessario
-            ),
-            margem_minima_percentual=float(
-                margem_minima_percentual
-            ),
-        )
-
-    if not analise.get(
-        "possui_custo_referencia",
-        False,
-    ):
-        return (
-            (
-                f"**{produto_nome}**\n\n"
-                "Não é possível recomendar uma redução de preço "
-                "com segurança porque não existe custo de referência "
-                "confirmado para esse produto."
-            ),
-            {
-                "avaliacao_disponivel": False,
-                "produto_id": produto_id,
-                "produto_nome": produto_nome,
-                "motivo": "custo_indisponivel",
-                "comparacao": dict(
-                    comparacao
-                ),
-            },
-        )
-
-    atende_margem = (
-        analise.get(
-            "atende_margem_minima"
-        )
-        is True
-    )
-
-    preco_com_desconto = Decimal(
-        str(
-            analise.get(
-                "preco_com_desconto"
-            )
-        )
-    )
-
-    margem_resultante = Decimal(
-        str(
-            analise.get(
-                "margem_com_desconto_percentual"
-            )
-        )
-    )
-
-    desconto_maximo_margem = Decimal(
-        str(
-            analise.get(
-                "desconto_maximo_com_margem_exigida_percentual"
-            )
-        )
-    )
-
-    preco_minimo_margem = Decimal(
-        str(
-            analise.get(
-                "preco_minimo_com_margem_exigida"
-            )
-        )
-    )
-
-    linhas = [
-        f"**{produto_nome}**",
-        "",
-        "## Avaliação de redução de preço",
-        "",
-        (
-            f"- Nosso preço: "
-            f"{_formatar_brl(preco_interno)}"
-        ),
-        (
-            f"- Preço da {concorrente_nome}: "
-            f"{_formatar_brl(preco_concorrente)}"
-        ),
-        (
-            f"- Desconto necessário para igualar: "
-            f"{_formatar_percentual(desconto_necessario)}"
-        ),
-        (
-            f"- Preço após o desconto: "
-            f"{_formatar_brl(preco_com_desconto)}"
-        ),
-        (
-            f"- Margem resultante: "
-            f"{_formatar_percentual(margem_resultante)}"
-        ),
-        (
-            f"- Margem mínima definida: "
-            f"{_formatar_percentual(margem_minima_percentual)}"
-        ),
-        "",
-    ]
-
-    if atende_margem:
-        linhas.extend(
-            [
-                (
-                    "**Recomendação:** financeiramente, é possível "
-                    "igualar o preço do concorrente mantendo a margem "
-                    "mínima definida."
-                ),
-                (
-                    "A decisão final ainda deve considerar demanda, "
-                    "posicionamento e estratégia comercial."
-                ),
-            ]
-        )
-
-        recomendacao = (
-            "pode_igualar_mantendo_margem"
-        )
-
-    else:
-        diferenca_preco_seguro = (
-            preco_minimo_margem
-            - preco_concorrente
-        ).quantize(
-            Decimal("0.01"),
-            rounding=ROUND_HALF_UP,
-        )
-
-        linhas.extend(
-            [
-                (
-                    "**Recomendação:** não é recomendável igualar "
-                    "o preço do concorrente mantendo a política atual "
-                    "de margem."
-                ),
-                (
-                    f"O desconto máximo preservando "
-                    f"{_formatar_percentual(margem_minima_percentual)} "
-                    f"de margem é "
-                    f"{_formatar_percentual(desconto_maximo_margem)}, "
-                    f"resultando em um preço mínimo de "
-                    f"{_formatar_brl_markdown(preco_minimo_margem)}."
-                ),
-            ]
-        )
-
-        if diferenca_preco_seguro > 0:
-            linhas.append(
-                (
-                    "Mesmo nesse preço mínimo seguro, nossa oferta "
-                    f"ficaria {_formatar_brl_markdown(diferenca_preco_seguro)} "
-                    f"acima da {concorrente_nome}."
-                )
-            )
-
-        recomendacao = (
-            "nao_igualar_margem_insuficiente"
-        )
-
-    linhas.extend(
-        [
-            "",
-            (
-                "**Limitação:** o custo usado é histórico e deve ser "
-                "confirmado antes de alterar o preço."
-            ),
-        ]
-    )
-
-    dados = {
-        "avaliacao_disponivel": True,
-        "produto_id": produto_id,
-        "produto_nome": produto_nome,
-        "concorrente_nome": concorrente_nome,
-        "preco_interno": float(
-            preco_interno
-        ),
-        "preco_concorrente": float(
-            preco_concorrente
-        ),
-        "diferenca_valor": float(
-            diferenca
-        ),
-        "desconto_necessario_percentual": float(
-            desconto_necessario
-        ),
-        "preco_com_desconto": float(
-            preco_com_desconto
-        ),
-        "margem_resultante_percentual": float(
-            margem_resultante
-        ),
-        "margem_minima_percentual": float(
-            margem_minima_percentual
-        ),
-        "atende_margem_minima": atende_margem,
-        "desconto_maximo_seguro_percentual": float(
-            desconto_maximo_margem
-        ),
-        "preco_minimo_com_margem": float(
-            preco_minimo_margem
-        ),
-        "recomendacao": recomendacao,
-        "comparacao": dict(
-            comparacao
-        ),
-        "analise_margem": analise,
-    }
-
-    return (
-        "\n".join(
-            linhas
-        ),
-        dados,
-    )
-
-
 def executar_fluxo_deterministico(
     pergunta: str,
     memoria: Mapping[str, Any] | None = None,
@@ -2323,26 +1574,6 @@ def executar_fluxo_deterministico(
             ),
             memoria=memoria_atual,
             fluxo=fluxo,
-        )
-
-
-    if fluxo == "avaliar_reducao_preco":
-        resposta, dados = _avaliar_reducao_preco(
-            memoria_atual
-        )
-
-        memoria_atual = registrar_fluxo(
-            memoria_atual,
-            fluxo=fluxo,
-            intencao="analisar",
-        )
-
-        return ResultadoOrquestracao(
-            tratado=True,
-            resposta=resposta,
-            memoria=memoria_atual,
-            fluxo=fluxo,
-            dados=dados,
         )
 
     if fluxo == "listar_produtos":

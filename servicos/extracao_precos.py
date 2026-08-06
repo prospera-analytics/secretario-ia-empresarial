@@ -535,20 +535,9 @@ def analisar_oferta_produto(
     """
     Valida uma página de produto e extrai um único preço explícito.
 
-    Fluxo:
-
-    1. valida a correspondência do produto;
-    2. seleciona o extrator da loja;
-    3. extrai um único preço explicitamente publicado;
-    4. retorna a oferta validada.
-
-    O serviço não:
-
-    - procura vários candidatos monetários;
-    - calcula descontos;
-    - soma parcelas;
-    - infere preços;
-    - escolhe valores por pontuação.
+    A identificação do produto usa prioritariamente o título da
+    página, evitando contaminação por produtos relacionados exibidos
+    no conteúdo da loja.
     """
 
     if not isinstance(
@@ -563,33 +552,47 @@ def analisar_oferta_produto(
     ):
         return None
 
-    titulo = titulo.strip()
-    conteudo = conteudo.strip()
+    titulo_limpo = titulo.strip()
+    conteudo_limpo = conteudo.strip()
 
-    if not titulo and not conteudo:
+    if not titulo_limpo or not conteudo_limpo:
         return None
 
-    contexto_produto = conteudo[
-        :_LIMITE_CONTEXTO_PRODUTO
-    ]
-
+    # O título da página é a fonte mais segura para identificar:
+    # - marca;
+    # - modelo;
+    # - variante;
+    # - armazenamento;
+    # - condição do produto.
+    #
+    # Não usamos os primeiros milhares de caracteres da página,
+    # pois lojas frequentemente incluem produtos relacionados,
+    # recomendações e outras variantes nesse trecho.
     correspondencia = (
         avaliar_correspondencia_produto(
             nome_produto=nome_produto,
             marca=marca,
             armazenamento_gb=armazenamento_gb,
-            titulo=titulo,
-            contexto_produto=contexto_produto,
+            titulo=titulo_limpo,
+            contexto_produto="",
         )
     )
 
     if correspondencia is None:
         return None
 
+    # A comparação principal aceita apenas o mesmo produto,
+    # sem divergência de variante ou armazenamento.
+    if correspondencia.tipo not in {
+        "exato",
+        "equivalente",
+    }:
+        return None
+
     preco_extraido = (
         extrair_preco_concorrente(
             dominio=dominio,
-            conteudo=conteudo,
+            conteudo=conteudo_limpo,
         )
     )
 

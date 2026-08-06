@@ -22,6 +22,10 @@ from analises.alertas import (
     gerar_alertas_produto,
 )
 
+from sqlalchemy import func, select
+
+from database.models import Produto
+
 def _resposta_erro(
     erro: Exception,
 ) -> dict[str, Any]:
@@ -32,6 +36,133 @@ def _resposta_erro(
         "erro": str(erro),
     }
 
+
+def _resolver_produto_id(
+    sessao,
+    produto_id: int | str,
+) -> int:
+    """
+    Resolve um produto informado por ID numérico ou nome.
+
+    Evita falhas quando o modelo envia o nome do produto no campo
+    produto_id.
+    """
+
+    if isinstance(produto_id, int):
+        if produto_id <= 0:
+            raise ValueError(
+                "O produto_id deve ser maior que zero."
+            )
+
+        produto = sessao.get(
+            Produto,
+            produto_id,
+        )
+
+        if produto is None:
+            raise ValueError(
+                f"Produto com ID {produto_id} não encontrado."
+            )
+
+        return produto.id
+
+    if not isinstance(produto_id, str):
+        raise TypeError(
+            "O produto deve ser informado por ID ou nome."
+        )
+
+    termo = produto_id.strip()
+
+    if not termo:
+        raise ValueError(
+            "O nome do produto não pode estar vazio."
+        )
+
+    if termo.isdigit():
+        return _resolver_produto_id(
+            sessao=sessao,
+            produto_id=int(termo),
+        )
+
+    produto_exato = sessao.scalar(
+        select(Produto)
+        .where(
+            func.lower(Produto.nome)
+            == termo.casefold()
+        )
+        .where(
+            Produto.ativo.is_(True)
+        )
+        .limit(1)
+    )
+
+    if produto_exato is not None:
+        return produto_exato.id
+
+    produtos = list(
+        sessao.scalars(
+            select(Produto)
+            .where(
+                Produto.nome.ilike(
+                    f"%{termo}%"
+                )
+            )
+            .where(
+                Produto.ativo.is_(True)
+            )
+            .order_by(
+                Produto.nome
+            )
+            .limit(5)
+        ).all()
+    )
+
+    if not produtos:
+        raise ValueError(
+            f"Nenhum produto encontrado para: {termo}."
+        )
+
+    if len(produtos) > 1:
+        nomes = ", ".join(
+            produto.nome
+            for produto in produtos
+        )
+
+        raise ValueError(
+            "A identificação do produto ficou ambígua. "
+            f"Resultados encontrados: {nomes}."
+        )
+
+    return produtos[0].id
+
+
+def _converter_inteiro_positivo(
+    valor: int | str,
+    nome: str,
+) -> int:
+    """
+    Converte um valor numérico ou uma string para inteiro positivo.
+    """
+
+    try:
+        convertido = int(
+            str(valor).strip()
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ) as erro:
+        raise ValueError(
+            f"{nome} precisa ser um número inteiro."
+        ) from erro
+
+    if convertido <= 0:
+        raise ValueError(
+            f"{nome} precisa ser maior que zero."
+        )
+
+    return convertido
 
 @tool
 def analisar_desconto_produto(
@@ -238,32 +369,57 @@ def consultar_alertas_estoque(
     
 @tool
 def recomendar_fornecedor_para_reposicao(
-    produto_id: int,
-    quantidade: int | None = None,
-    dias_analise: int = 30,
-    dias_cobertura_desejada: int = 30,
+    produto_id: int | str,
+    quantidade: int | str | None = None,
+    dias_analise: int | str = 30,
+    dias_cobertura_desejada: int | str = 30,
 ) -> dict[str, Any]:
     """
     Recomenda um fornecedor para repor um produto.
 
-    Compara o preço histórico mais recente de cada fornecedor, prazo
-    de entrega, risco de ruptura e compras pendentes.
-
-    O preço é apenas uma referência histórica e precisa ser
-    confirmado antes da compra.
-
-    Esta ferramenta não registra compras.
+    O produto pode ser informado por ID numérico ou pelo nome.
+    Compara preço histórico, prazo, risco de ruptura e compras
+    pendentes.
     """
 
     try:
         with SessionLocal() as sessao:
-            analise = recomendar_fornecedor_produto(
+            produto_id_resolvido = _resolver_produto_id(
                 sessao=sessao,
                 produto_id=produto_id,
-                quantidade=quantidade,
-                dias_analise=dias_analise,
+            )
+
+            dias_analise_resolvido = (
+                _converter_inteiro_positivo(
+                    dias_analise,
+                    "dias_analise",
+                )
+            )
+
+            dias_cobertura_resolvido = (
+                _converter_inteiro_positivo(
+                    dias_cobertura_desejada,
+                    "dias_cobertura_desejada",
+                )
+            )
+
+            quantidade_resolvida = None
+
+            if quantidade is not None:
+                quantidade_resolvida = (
+                    _converter_inteiro_positivo(
+                        quantidade,
+                        "quantidade",
+                    )
+                )
+
+            analise = recomendar_fornecedor_produto(
+                sessao=sessao,
+                produto_id=produto_id_resolvido,
+                quantidade=quantidade_resolvida,
+                dias_analise=dias_analise_resolvido,
                 dias_cobertura_desejada=(
-                    dias_cobertura_desejada
+                    dias_cobertura_resolvido
                 ),
             )
 
@@ -273,7 +429,442 @@ def recomendar_fornecedor_para_reposicao(
             }
 
     except Exception as erro:
-        return _resposta_erro(erro)
+        return _resposta_erro(
+            erro
+        )
+
+
+@tool
+def analisar_prioridades_reposicao_catalogo(
+    dias_analise: int | str = 30,
+    dias_cobertura_desejada: int | str = 30,
+    apenas_ativos: bool = True,
+) -> dict[str, Any]:
+    """
+    Analisa todos os produtos e define a prioridade de reposição.
+
+    Considera:
+    - estoque atual;
+    - estoque mínimo;
+    - vendas recentes;
+    - dias de cobertura;
+    - compras pendentes;
+    - entregas atrasadas;
+    - necessidade líquida de nova compra;
+    - fornecedores históricos.
+
+    A ferramenta não cria compras e não altera o estoque.
+    """
+
+    try:
+        dias_analise_resolvido = (
+            _converter_inteiro_positivo(
+                dias_analise,
+                "dias_analise",
+            )
+        )
+
+        dias_cobertura_resolvido = (
+            _converter_inteiro_positivo(
+                dias_cobertura_desejada,
+                "dias_cobertura_desejada",
+            )
+        )
+
+        with SessionLocal() as sessao:
+            analises_estoque = (
+                listar_analises_estoque(
+                    sessao=sessao,
+                    dias_analise=(
+                        dias_analise_resolvido
+                    ),
+                    dias_cobertura_desejada=(
+                        dias_cobertura_resolvido
+                    ),
+                    apenas_ativos=apenas_ativos,
+                    apenas_com_alerta=False,
+                )
+            )
+
+            ranking: list[dict[str, Any]] = []
+
+            for estoque in analises_estoque:
+                produto_id = estoque.get(
+                    "produto_id"
+                )
+
+                produto_nome = estoque.get(
+                    "produto_nome"
+                )
+
+                if not isinstance(
+                    produto_id,
+                    int,
+                ):
+                    continue
+
+                try:
+                    reposicao = (
+                        recomendar_fornecedor_produto(
+                            sessao=sessao,
+                            produto_id=produto_id,
+                            quantidade=None,
+                            dias_analise=(
+                                dias_analise_resolvido
+                            ),
+                            dias_cobertura_desejada=(
+                                dias_cobertura_resolvido
+                            ),
+                        )
+                    )
+
+                except Exception as erro_produto:
+                    ranking.append(
+                        {
+                            "produto_id": produto_id,
+                            "produto_nome": produto_nome,
+                            "erro_analise_reposicao": (
+                                str(erro_produto)
+                            ),
+                            "ordem_prioridade": 99,
+                            "nivel_prioridade": (
+                                "analise_incompleta"
+                            ),
+                            "acao_recomendada": (
+                                "revisar_dados_do_produto"
+                            ),
+                        }
+                    )
+
+                    continue
+
+                estoque_atual = reposicao.get(
+                    "estoque_atual",
+                    estoque.get(
+                        "quantidade_atual"
+                    ),
+                )
+
+                estoque_minimo = estoque.get(
+                    "estoque_minimo"
+                )
+
+                dias_cobertura = estoque.get(
+                    "dias_cobertura_estimados"
+                )
+
+                media_vendas_diaria = reposicao.get(
+                    "media_vendas_diaria",
+                    0,
+                )
+
+                unidades_pendentes = reposicao.get(
+                    "unidades_pendentes",
+                    0,
+                )
+
+                compra_adicional_necessaria = (
+                    reposicao.get(
+                        "compra_adicional_necessaria",
+                        False,
+                    )
+                    is True
+                )
+
+                quantidade_a_comprar = reposicao.get(
+                    "quantidade_a_comprar_apos_pendencias",
+                    0,
+                )
+
+                compras_pendentes = list(
+                    reposicao.get(
+                        "compras_pendentes"
+                    )
+                    or []
+                )
+
+                compras_atrasadas = [
+                    compra
+                    for compra in compras_pendentes
+                    if (
+                        isinstance(
+                            compra,
+                            dict,
+                        )
+                        and compra.get(
+                            "entrega_atrasada"
+                        )
+                        is True
+                    )
+                ]
+
+                possui_compra_atrasada = bool(
+                    compras_atrasadas
+                )
+
+                cobertura_muito_baixa = (
+                    isinstance(
+                        dias_cobertura,
+                        (int, float),
+                    )
+                    and dias_cobertura <= 14
+                )
+
+                sem_estoque = (
+                    isinstance(
+                        estoque_atual,
+                        (int, float),
+                    )
+                    and estoque_atual <= 0
+                )
+
+                abaixo_minimo = (
+                    isinstance(
+                        estoque_atual,
+                        (int, float),
+                    )
+                    and isinstance(
+                        estoque_minimo,
+                        (int, float),
+                    )
+                    and estoque_atual
+                    < estoque_minimo
+                )
+
+                # A ordem menor representa maior prioridade.
+                if (
+                    compra_adicional_necessaria
+                    and sem_estoque
+                ):
+                    ordem_prioridade = 1
+                    nivel_prioridade = (
+                        "critica_nova_compra"
+                    )
+                    acao_recomendada = (
+                        "realizar_nova_compra_imediatamente"
+                    )
+
+                elif compra_adicional_necessaria:
+                    ordem_prioridade = 2
+                    nivel_prioridade = (
+                        "alta_nova_compra"
+                    )
+                    acao_recomendada = (
+                        "planejar_nova_compra"
+                    )
+
+                elif (
+                    possui_compra_atrasada
+                    and cobertura_muito_baixa
+                ):
+                    ordem_prioridade = 3
+                    nivel_prioridade = (
+                        "alta_cobrar_entrega"
+                    )
+                    acao_recomendada = (
+                        "cobrar_ou_renegociar_entrega_atrasada"
+                    )
+
+                elif possui_compra_atrasada:
+                    ordem_prioridade = 4
+                    nivel_prioridade = (
+                        "media_cobrar_entrega"
+                    )
+                    acao_recomendada = (
+                        "confirmar_entrega_pendente"
+                    )
+
+                elif cobertura_muito_baixa:
+                    ordem_prioridade = 5
+                    nivel_prioridade = (
+                        "media_cobertura_baixa"
+                    )
+                    acao_recomendada = (
+                        "monitorar_e_planejar_reposicao"
+                    )
+
+                elif abaixo_minimo:
+                    ordem_prioridade = 6
+                    nivel_prioridade = (
+                        "atencao_estoque_minimo"
+                    )
+                    acao_recomendada = (
+                        "monitorar_estoque"
+                    )
+
+                else:
+                    ordem_prioridade = 7
+                    nivel_prioridade = "normal"
+                    acao_recomendada = (
+                        "nenhuma_acao_imediata"
+                    )
+
+                melhor_fornecedor = reposicao.get(
+                    "melhor_fornecedor"
+                )
+
+                ranking.append(
+                    {
+                        "produto_id": produto_id,
+                        "produto_nome": (
+                            reposicao.get(
+                                "produto_nome"
+                            )
+                            or produto_nome
+                        ),
+                        "ordem_prioridade": (
+                            ordem_prioridade
+                        ),
+                        "nivel_prioridade": (
+                            nivel_prioridade
+                        ),
+                        "acao_recomendada": (
+                            acao_recomendada
+                        ),
+                        "estoque_atual": estoque_atual,
+                        "estoque_minimo": estoque_minimo,
+                        "dias_cobertura_estimados": (
+                            dias_cobertura
+                        ),
+                        "media_vendas_diaria": (
+                            media_vendas_diaria
+                        ),
+                        "unidades_pendentes": (
+                            unidades_pendentes
+                        ),
+                        "quantidade_compras_atrasadas": (
+                            len(
+                                compras_atrasadas
+                            )
+                        ),
+                        "compras_atrasadas": (
+                            compras_atrasadas
+                        ),
+                        "estoque_projetado_com_pendencias": (
+                            reposicao.get(
+                                "estoque_projetado_com_pendencias"
+                            )
+                        ),
+                        "compra_adicional_necessaria": (
+                            compra_adicional_necessaria
+                        ),
+                        "quantidade_a_comprar": (
+                            quantidade_a_comprar
+                        ),
+                        "melhor_fornecedor": (
+                            melhor_fornecedor
+                        ),
+                        "observacao_preco": (
+                            reposicao.get(
+                                "observacao_preco"
+                            )
+                        ),
+                    }
+                )
+
+            def chave_ordenacao(
+                item: dict[str, Any],
+            ) -> tuple[Any, ...]:
+                cobertura = item.get(
+                    "dias_cobertura_estimados"
+                )
+
+                if not isinstance(
+                    cobertura,
+                    (int, float),
+                ):
+                    cobertura = float("inf")
+
+                vendas = item.get(
+                    "media_vendas_diaria"
+                )
+
+                if not isinstance(
+                    vendas,
+                    (int, float),
+                ):
+                    vendas = 0
+
+                return (
+                    item.get(
+                        "ordem_prioridade",
+                        99,
+                    ),
+                    cobertura,
+                    -vendas,
+                    item.get(
+                        "produto_nome",
+                        "",
+                    ),
+                )
+
+            ranking.sort(
+                key=chave_ordenacao
+            )
+
+            produtos_validos = [
+                item
+                for item in ranking
+                if item.get(
+                    "ordem_prioridade",
+                    99,
+                ) < 99
+            ]
+
+            produto_prioritario = (
+                produtos_validos[0]
+                if produtos_validos
+                else None
+            )
+
+            return {
+                "sucesso": True,
+                "quantidade_produtos_analisados": (
+                    len(
+                        analises_estoque
+                    )
+                ),
+                "produto_prioritario": (
+                    produto_prioritario
+                ),
+                "ranking": ranking,
+                "criterio_prioridade": [
+                    (
+                        "1. Ruptura com necessidade líquida "
+                        "de nova compra."
+                    ),
+                    (
+                        "2. Necessidade líquida de compra "
+                        "após considerar pendências."
+                    ),
+                    (
+                        "3. Cobertura muito baixa com "
+                        "entrega atrasada."
+                    ),
+                    (
+                        "4. Compras pendentes atrasadas."
+                    ),
+                    (
+                        "5. Cobertura baixa ou estoque "
+                        "abaixo do mínimo."
+                    ),
+                    (
+                        "6. Menor cobertura e maior "
+                        "velocidade de vendas."
+                    ),
+                ],
+                "observacao": (
+                    "Uma compra atrasada não gera automaticamente "
+                    "uma nova compra. A ação pode ser cobrar ou "
+                    "renegociar a entrega pendente."
+                ),
+            }
+
+    except Exception as erro:
+        return _resposta_erro(
+            erro
+        )
+
 
 @tool
 def consultar_alertas_produto(
@@ -397,6 +988,7 @@ FERRAMENTAS_ANALISES = [
     analisar_risco_estoque_produto,
     consultar_alertas_estoque,
     recomendar_fornecedor_para_reposicao,
+    analisar_prioridades_reposicao_catalogo,
     consultar_alertas_produto,
     consultar_painel_alertas_empresariais,
 ]

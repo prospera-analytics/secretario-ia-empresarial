@@ -261,7 +261,7 @@ def _selecionar_melhor_oferta(
     OfertaValidada,
 ] | None:
     """
-    Analisa cada página e mantém no máximo uma oferta por página.
+    Analisa as páginas extraídas e escolhe a melhor oferta válida.
     """
 
     candidatas: list[
@@ -286,6 +286,14 @@ def _selecionar_melhor_oferta(
         if oferta is None:
             continue
 
+        # Para comparação principal, não aceitamos versões
+        # com armazenamento ou variante divergente.
+        if oferta.correspondencia not in {
+            "exato",
+            "equivalente",
+        }:
+            continue
+
         candidatas.append(
             (
                 pagina,
@@ -297,10 +305,8 @@ def _selecionar_melhor_oferta(
         return None
 
     ordem_correspondencia = {
-        "exato": 4,
-        "equivalente": 3,
-        "muito_similar": 2,
-        "similar": 1,
+        "exato": 2,
+        "equivalente": 1,
     }
 
     return max(
@@ -335,6 +341,9 @@ def consultar_preco_produto_concorrente(
     5. extrai um único preço explícito por página;
     6. seleciona a melhor oferta válida;
     7. registra o resultado no banco.
+
+    As mensagens impressas são diagnósticos temporários para
+    identificar em qual etapa uma busca falha.
     """
 
     produto = _validar_produto(
@@ -356,23 +365,88 @@ def consultar_preco_produto_concorrente(
         )
 
         if cache is not None:
+            print()
+            print("=" * 80)
+            print(
+                f"CACHE: {produto.nome} | "
+                f"{concorrente.nome}"
+            )
+            print(
+                f"Registro coletado em: "
+                f"{cache.coletado_em}"
+            )
+
             return _montar_resultado_cache(
                 produto=produto,
                 concorrente=concorrente,
                 registro=cache,
             )
 
+    nome_produto_busca = (
+        _montar_nome_produto_para_busca(
+            produto
+        )
+    )
+
+    print()
+    print("=" * 80)
+    print(
+        f"BUSCA: {produto.nome} | "
+        f"{concorrente.nome}"
+    )
+    print(
+        f"Consulta enviada: {nome_produto_busca}"
+    )
+    print(
+        f"Domínio: {concorrente.dominio}"
+    )
+
     paginas = buscar_e_extrair_paginas(
-        nome_produto=(
-            _montar_nome_produto_para_busca(
-                produto
-            )
-        ),
+        nome_produto=nome_produto_busca,
         nome_concorrente=concorrente.nome,
         dominio_concorrente=(
             concorrente.dominio
         ),
     )
+
+    print(
+        f"Páginas encontradas: {len(paginas)}"
+    )
+
+    for indice, pagina in enumerate(
+        paginas,
+        start=1,
+    ):
+        print()
+        print(
+            f"CANDIDATA {indice}"
+        )
+        print(
+            f"Título: {pagina.titulo}"
+        )
+        print(
+            f"URL: {pagina.url}"
+        )
+        print(
+            "Pontuação da busca:",
+            pagina.pontuacao_busca,
+        )
+        print(
+            "Tamanho do conteúdo:",
+            len(
+                pagina.conteudo_extraido or ""
+            ),
+        )
+
+        if pagina.conteudo_extraido:
+            trecho = " ".join(
+                pagina.conteudo_extraido.split()
+            )[:500]
+
+            print(
+                "Início do conteúdo:",
+                trecho,
+            )
 
     melhor = _selecionar_melhor_oferta(
         paginas=paginas,
@@ -383,9 +457,44 @@ def consultar_preco_produto_concorrente(
     )
 
     if melhor is None:
+        print()
+        print(
+            "RESULTADO FINAL: nenhuma oferta "
+            "verificável encontrada."
+        )
+
         return None
 
     pagina, oferta = melhor
+
+    print()
+    print(
+        "MELHOR OFERTA SELECIONADA"
+    )
+    print(
+        "Título:",
+        pagina.titulo,
+    )
+    print(
+        "URL:",
+        pagina.url,
+    )
+    print(
+        "Preço:",
+        oferta.preco,
+    )
+    print(
+        "Correspondência:",
+        oferta.correspondencia,
+    )
+    print(
+        "Confiança:",
+        oferta.confianca,
+    )
+    print(
+        "Diferenças:",
+        oferta.diferencas,
+    )
 
     similaridade = (
         oferta.confianca.quantize(
@@ -409,6 +518,11 @@ def consultar_preco_produto_concorrente(
             oferta.correspondencia
         ),
         disponivel=True,
+    )
+
+    print(
+        "OFERTA REGISTRADA NO BANCO:",
+        registro.id,
     )
 
     return ResultadoConsultaPreco(

@@ -643,6 +643,13 @@ def resumir_memoria_para_modelo(
         memoria
     )
 
+    memoria_atualizada = memoria_atual
+    
+    memoria_consulta = _memoria_para_pergunta(
+        pergunta=pergunta_limpa,
+        memoria=memoria_atual,
+    )
+
     linhas = [
         "CONTEXTO FACTUAL CONFIRMADO",
     ]

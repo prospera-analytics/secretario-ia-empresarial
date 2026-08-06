@@ -13,12 +13,6 @@ from langchain_core.messages import (
 
 from langchain_core.tools import BaseTool
 
-import json
-
-from agente.classificador import (
-    classificar_intencao,
-)
-
 from agente.modelo import criar_modelo
 from agente.prompt import PROMPT_SECRETARIO_EMPRESARIAL
 from agente.roteador import (
@@ -30,7 +24,6 @@ from agente.roteador import (
 
 from agente.memoria import (
     normalizar_memoria,
-    registrar_analise_reposicao,
     resumir_memoria_para_modelo,
 )
 
@@ -174,199 +167,6 @@ def _nomes_ferramentas_executadas(
             )
 
     return nomes
-
-
-def _converter_resultado_ferramenta(
-    conteudo: Any,
-) -> Mapping[str, Any] | None:
-    """
-    Converte o conteúdo de ToolMessage para um mapeamento.
-
-    LangChain pode devolver o resultado como dict, texto JSON
-    ou bloco de conteúdo.
-    """
-
-    if isinstance(conteudo, Mapping):
-        return conteudo
-
-    if isinstance(conteudo, str):
-        texto = conteudo.strip()
-
-        if not texto:
-            return None
-
-        try:
-            dados = json.loads(
-                texto
-            )
-        except json.JSONDecodeError:
-            return None
-
-        if isinstance(dados, Mapping):
-            return dados
-
-        return None
-
-    if isinstance(conteudo, list):
-        for bloco in conteudo:
-            resultado = (
-                _converter_resultado_ferramenta(
-                    bloco
-                )
-            )
-
-            if resultado is not None:
-                return resultado
-
-    return None
-
-
-def _resultados_ferramentas(
-    resultado: Mapping[str, Any],
-) -> list[tuple[str, Mapping[str, Any]]]:
-    """
-    Extrai nomes e resultados reais das ferramentas executadas.
-    """
-
-    resultados: list[
-        tuple[str, Mapping[str, Any]]
-    ] = []
-
-    for mensagem in resultado.get(
-        "messages",
-        [],
-    ):
-        if type(mensagem).__name__ != "ToolMessage":
-            continue
-
-        nome = getattr(
-            mensagem,
-            "name",
-            None,
-        )
-
-        if not isinstance(nome, str) or not nome:
-            continue
-
-        conteudo = getattr(
-            mensagem,
-            "content",
-            None,
-        )
-
-        dados = _converter_resultado_ferramenta(
-            conteudo
-        )
-
-        if dados is not None:
-            resultados.append(
-                (
-                    nome,
-                    dados,
-                )
-            )
-
-    return resultados
-
-
-
-def _atualizar_memoria_com_ferramentas(
-    memoria: Mapping[str, Any] | None,
-    resultado_agente: Mapping[str, Any],
-) -> dict[str, Any]:
-    """
-    Atualiza a memória somente com resultados factuais confirmados
-    por ferramentas realmente executadas.
-
-    O texto livre produzido pelo modelo não é copiado para a memória.
-    """
-
-    memoria_atualizada = normalizar_memoria(
-        memoria
-    )
-
-    for nome, dados in _resultados_ferramentas(
-        resultado_agente
-    ):
-        if (
-            nome
-            == "recomendar_fornecedor_para_reposicao"
-        ):
-            memoria_atualizada = (
-                registrar_analise_reposicao(
-                    memoria=memoria_atualizada,
-                    resultado_ferramenta=dados,
-                )
-            )
-
-    return memoria_atualizada
-
-
-def _eh_pergunta_global_produtos(
-    pergunta: str,
-) -> bool:
-    """
-    Detecta perguntas que precisam analisar todo o catálogo.
-
-    O produto atual da memória não deve limitar essas consultas.
-    """
-
-    texto = pergunta.casefold()
-
-    termos_globais = (
-        "qual produto",
-        "quais produtos",
-        "entre os produtos",
-        "entre todos",
-        "todos os produtos",
-        "todo o catálogo",
-        "todo o catalogo",
-        "do catálogo",
-        "do catalogo",
-        "maior risco",
-        "menor estoque",
-        "maiores riscos",
-        "mais crítico",
-        "mais critico",
-        "prioridade máxima",
-        "prioridade maxima",
-        "prioridade de reposição",
-        "prioridade de reposicao",
-    )
-
-    return any(
-        termo in texto
-        for termo in termos_globais
-    )
-
-
-def _memoria_para_pergunta(
-    pergunta: str,
-    memoria: Mapping[str, Any] | None,
-) -> dict[str, Any]:
-    """
-    Cria a memória factual usada somente na pergunta atual.
-
-    Em consultas globais, remove todo o contexto específico do
-    produto anterior, sem modificar a memória persistente original.
-    """
-
-    memoria_resolvida = normalizar_memoria(
-        memoria
-    )
-
-    if _eh_pergunta_global_produtos(
-        pergunta
-    ):
-        for campo in (
-            "produto",
-            "ultima_analise_reposicao",
-            "ultimo_fornecedor_recomendado",
-            "ultima_compra_pendente",
-        ):
-            memoria_resolvida[campo] = None
-
-    return memoria_resolvida
 
 def executar_agente(
     pergunta: str,
@@ -556,7 +356,6 @@ def conversar(
         resultado
     )
 
-
 def conversar_com_memoria(
     pergunta: str,
     memoria: Mapping[str, Any] | None = None,
@@ -582,16 +381,11 @@ def conversar_com_memoria(
     memoria_atual = normalizar_memoria(
         memoria
     )
-    
-    memoria_consulta = _memoria_para_pergunta(
-        pergunta=pergunta_limpa,
-        memoria=memoria_atual,
-    )
 
     resultado_deterministico = (
         executar_fluxo_deterministico(
             pergunta=pergunta_limpa,
-            memoria=memoria_consulta,
+            memoria=memoria_atual,
         )
     )
 
@@ -616,7 +410,7 @@ def conversar_com_memoria(
 
     contexto_factual = (
         resumir_memoria_para_modelo(
-            memoria_consulta
+            memoria_atual
         )
     )
 
@@ -635,20 +429,13 @@ def conversar_com_memoria(
         pergunta=pergunta_limpa,
         historico=mensagens_fallback,
         ferramentas=ferramentas,
-        memoria=memoria_consulta,
+        memoria=memoria_atual,
     )
 
     resposta = extrair_resposta_final(
         resultado_agente
     )
 
-    memoria_atualizada = (
-        _atualizar_memoria_com_ferramentas(
-            memoria=memoria_atual,
-            resultado_agente=resultado_agente,
-        )
-    )
-    
     ferramentas_executadas = list(
         resultado_agente.get(
             "_ferramentas_executadas",
@@ -679,7 +466,7 @@ def conversar_com_memoria(
 
     return {
         "resposta": resposta,
-        "memoria": memoria_atualizada,
+        "memoria": memoria_atual,
         "fluxo": None,
         "dados": None,
         "deterministico": False,

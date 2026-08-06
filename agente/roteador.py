@@ -1,11 +1,14 @@
 """
 Roteamento seletivo de ferramentas do Secretário IA Empresarial.
 
-O roteador utiliza regras determinísticas e não faz chamadas adicionais
-a modelos de linguagem.
+Estratégia:
 
-Fluxos críticos são tratados primeiro por regras de alto nível.
-As demais perguntas seguem pelo roteamento genérico de categorias.
+1. Regras determinísticas para fluxos críticos e inequívocos.
+2. Detecção de conceitos empresariais, em vez de frases completas.
+3. Seleção genérica por relevância quando não houver regra crítica.
+4. Classificador LLM econômico somente quando o resultado for fraco.
+
+O roteador não consulta banco, web ou modelo de linguagem.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Iterable, Sequence
 
 from langchain_core.tools import BaseTool
 
@@ -51,7 +54,9 @@ LIMITE_FERRAMENTAS_POR_REQUISICAO = 8
 
 @dataclass(frozen=True)
 class ResultadoRoteamento:
-    """Resultado produzido pelo roteador de ferramentas."""
+    """
+    Resultado completo produzido pelo roteador.
+    """
 
     intencao: str
     categorias: tuple[str, ...]
@@ -65,6 +70,10 @@ class ResultadoRoteamento:
             for ferramenta in self.ferramentas
         ]
 
+
+# ============================================================
+# REGISTRO DE FERRAMENTAS
+# ============================================================
 
 GRUPOS_FERRAMENTAS: dict[
     str,
@@ -84,17 +93,25 @@ GRUPOS_FERRAMENTAS: dict[
 }
 
 
-PALAVRAS_CATEGORIAS: dict[str, set[str]] = {
+# ============================================================
+# CONCEITOS EMPRESARIAIS
+# ============================================================
+
+CONCEITOS: dict[str, set[str]] = {
     "produto": {
         "produto",
         "produtos",
+        "item",
+        "itens",
+        "catalogo",
         "smartphone",
         "smartphones",
         "celular",
         "celulares",
+        "aparelho",
+        "aparelhos",
         "modelo",
         "modelos",
-        "armazenamento",
         "iphone",
         "galaxy",
         "motorola",
@@ -107,30 +124,51 @@ PALAVRAS_CATEGORIAS: dict[str, set[str]] = {
         "estoques",
         "quantidade disponivel",
         "saldo",
+        "unidades disponiveis",
+        "estoque minimo",
+        "estoque baixo",
+        "estoque critico",
+        "sem estoque",
+        "em falta",
         "ruptura",
         "cobertura",
-        "estoque minimo",
+        "dias de cobertura",
     },
     "fornecedor": {
         "fornecedor",
         "fornecedores",
+        "distribuidor",
+        "distribuidores",
+        "parceiro comercial",
+        "parceiros comerciais",
+        "quem fornece",
+        "quem entrega",
         "prazo de entrega",
-        "entrega",
     },
     "compra": {
         "compra",
         "compras",
         "comprar",
-        "adquirir",
+        "pedido",
+        "pedidos",
         "pedido de compra",
-        "pedidos de compra",
+        "adquirir",
+        "aquisicao",
+        "repor",
+        "reposicao",
+        "reabastecer",
     },
     "venda": {
         "venda",
         "vendas",
         "vender",
+        "vendido",
+        "vendidos",
+        "demanda",
         "faturamento",
         "receita",
+        "mais vendido",
+        "mais vendidos",
     },
     "campanha": {
         "campanha",
@@ -143,9 +181,10 @@ PALAVRAS_CATEGORIAS: dict[str, set[str]] = {
     "concorrente": {
         "concorrente",
         "concorrentes",
+        "concorrencia",
         "loja concorrente",
-        "lojas concorrentes",
         "amazon",
+        "amazon brasil",
         "magalu",
         "magazine luiza",
     },
@@ -153,19 +192,34 @@ PALAVRAS_CATEGORIAS: dict[str, set[str]] = {
         "preco concorrente",
         "precos concorrentes",
         "preco da concorrencia",
-        "precos da concorrencia",
-        "menor preco",
         "comparar preco",
         "comparacao de preco",
+        "oferta concorrente",
+        "menor preco concorrente",
     },
 }
 
 
-PALAVRAS_ANALITICAS = {
+TERMOS_PRECO = {
+    "preco",
+    "precos",
+    "valor",
+    "valores",
+    "oferta",
+    "ofertas",
+    "custa",
+    "custando",
+    "quanto custa",
+    "quanto esta",
+}
+
+
+TERMOS_ANALISE = {
     "analise",
     "analisar",
+    "avaliar",
     "diagnostico",
-    "situacao geral",
+    "situacao",
     "visao geral",
     "painel",
     "alerta",
@@ -177,33 +231,140 @@ PALAVRAS_ANALITICAS = {
     "problema",
     "problemas",
     "margem",
-    "margem de lucro",
     "lucro",
-    "lucratividade",
+    "rentabilidade",
     "desconto",
-    "descontos",
     "reposicao",
-    "repor",
     "ruptura",
     "cobertura",
     "recomendacao",
     "recomendar",
-    "melhor fornecedor",
-    "saude da empresa",
-    "desempenho da empresa",
+    "melhor",
+    "mais adequado",
+    "vale a pena",
 }
 
 
-PALAVRAS_EMPRESA_GERAL = {
+TERMOS_EMPRESA_GERAL = {
     "empresa",
     "negocio",
     "operacao",
     "operacoes",
     "gestao",
+    "saude da empresa",
+    "desempenho da empresa",
+    "principais riscos",
+    "prioridades da empresa",
 }
 
 
-PALAVRAS_ESCRITA = {
+TERMOS_DECISAO = {
+    "melhor",
+    "recomendar",
+    "recomenda",
+    "recomendaria",
+    "indicacao",
+    "indicar",
+    "escolher",
+    "escolha",
+    "preferir",
+    "mais adequado",
+    "mais vantajoso",
+    "vale a pena",
+    "devemos",
+    "deveria",
+    "priorizar",
+    "prioridade",
+}
+
+
+TERMOS_REPOSICAO = {
+    "comprar",
+    "compra",
+    "compre",
+    "adquirir",
+    "aquisicao",
+    "repor",
+    "reposicao",
+    "reabastecer",
+    "abastecer",
+    "novo pedido",
+    "proximo pedido",
+    "fazer pedido",
+    "realizar pedido",
+    "comprar primeiro",
+    "repor primeiro",
+}
+
+
+TERMOS_URGENCIA_ESTOQUE = {
+    "estoque critico",
+    "estoque baixo",
+    "baixo estoque",
+    "sem estoque",
+    "em falta",
+    "falta de estoque",
+    "risco de ruptura",
+    "ruptura",
+    "acabando",
+    "poucas unidades",
+    "cobertura baixa",
+    "demanda alta",
+    "muitas vendas",
+    "vendas recentes",
+}
+
+
+TERMOS_COMPARACAO_FORNECEDOR = {
+    "custo e prazo",
+    "preco e prazo",
+    "melhor custo",
+    "menor custo",
+    "melhor preco",
+    "menor preco",
+    "melhor prazo",
+    "entrega mais rapida",
+    "quem entrega mais rapido",
+    "melhor combinacao",
+}
+
+
+TERMOS_ESCOPO_GLOBAL = {
+    "qual produto",
+    "quais produtos",
+    "qual item",
+    "quais itens",
+    "entre os produtos",
+    "entre todos",
+    "todos os produtos",
+    "todo o catalogo",
+    "maior risco",
+    "menor cobertura",
+    "prioridade maxima",
+    "maior prioridade",
+    "comprar primeiro",
+    "repor primeiro",
+    "atencao imediata",
+    "mais urgente",
+}
+
+
+TERMOS_PRIORIDADE_REPOSICAO = {
+    "prioridade de reposicao",
+    "prioridade para reposicao",
+    "prioridade maxima de reposicao",
+    "deveria receber prioridade",
+    "devemos priorizar",
+    "merece prioridade",
+    "comprar primeiro",
+    "repor primeiro",
+    "maior risco de ruptura",
+    "maior necessidade de reposicao",
+    "qual acao devemos tomar",
+}
+
+
+TERMOS_ESCRITA = {
     "cadastre",
     "cadastrar",
     "registre",
@@ -228,10 +389,6 @@ PALAVRAS_ESCRITA = {
     "reativar",
     "cancele",
     "cancelar",
-    "venda",
-    "vender",
-    "compre",
-    "comprar",
 }
 
 
@@ -246,122 +403,118 @@ PREFIXOS_LEITURA = (
     "analisar",
     "calcular",
     "recomendar",
-    "gerar_alertas",
+    "gerar",
 )
 
 
-ACOES_ESCRITA: dict[str, tuple[str, ...]] = {
-    "criacao": (
-        "cadastrar",
-        "criar",
-        "adicionar",
-        "registrar",
-    ),
-    "atualizacao": (
-        "atualizar",
-        "alterar",
-        "modificar",
-    ),
-    "exclusao": (
-        "excluir",
-        "remover",
-        "desativar",
-    ),
-    "reativacao": (
-        "reativar",
-        "ativar",
-    ),
-    "cancelamento": (
-        "cancelar",
-    ),
-}
-
-
-PALAVRAS_ACOES: dict[str, set[str]] = {
-    "criacao": {
-        "cadastre",
-        "cadastrar",
-        "crie",
-        "criar",
-        "adicione",
-        "adicionar",
-        "registre",
-        "registrar",
-        "venda",
-        "vender",
-        "compre",
-        "comprar",
-    },
-    "atualizacao": {
-        "atualize",
-        "atualizar",
-        "altere",
-        "alterar",
-        "modifique",
-        "modificar",
-    },
-    "exclusao": {
-        "exclua",
-        "excluir",
-        "remova",
-        "remover",
-        "desative",
-        "desativar",
-    },
-    "reativacao": {
-        "reative",
-        "reativar",
-        "ative",
-        "ativar",
-    },
-    "cancelamento": {
-        "cancele",
-        "cancelar",
-    },
-}
+PREFIXOS_ESCRITA = (
+    "criar",
+    "cadastrar",
+    "registrar",
+    "adicionar",
+    "modificar",
+    "atualizar",
+    "alterar",
+    "definir",
+    "remover",
+    "desativar",
+    "reativar",
+    "marcar",
+    "associar",
+)
 
 
 # ============================================================
-# REGRAS DE ALTO NÍVEL
+# CONJUNTOS MÍNIMOS PARA FLUXOS CRÍTICOS
 # ============================================================
 
-_TERMOS_PRECO = {
-    "preco",
-    "precos",
-    "valor",
-    "valores",
-    "oferta",
-    "ofertas",
-    "custa",
-    "custando",
-    "quanto custa",
-    "quanto esta",
-}
-
-
-_TERMOS_LOJAS_CONCORRENTES = {
-    "concorrente",
-    "concorrentes",
-    "concorrencia",
-    "amazon",
-    "amazon brasil",
-    "magalu",
-    "magazine luiza",
-}
-
-
-_FERRAMENTAS_CONSULTA_PRECO_CONCORRENTE = {
+FERRAMENTAS_PRECO_CONCORRENTE = {
     "pesquisar_smartphones",
     "consultar_concorrentes",
     "buscar_preco_atual_concorrente",
 }
 
 
+FERRAMENTAS_RECOMENDACAO_FORNECEDOR = {
+    "pesquisar_smartphones",
+    "analisar_risco_estoque_produto",
+    "recomendar_fornecedor_para_reposicao",
+}
+
+
+FERRAMENTAS_PRIORIDADE_REPOSICAO = {
+    "analisar_prioridades_reposicao_catalogo",
+}
+
+
+FERRAMENTAS_POR_INTENCAO_CLASSIFICADA: dict[
+    str,
+    set[str],
+] = {
+    "recomendacao_fornecedor": {
+        "pesquisar_smartphones",
+        "analisar_risco_estoque_produto",
+        "recomendar_fornecedor_para_reposicao",
+    },
+    "risco_estoque": {
+        "analisar_prioridades_reposicao_catalogo",
+        "analisar_risco_estoque_produto",
+        "consultar_alertas_estoque",
+    },
+    "consulta_estoque": {
+        "pesquisar_smartphones",
+        "consultar_estoque_produto",
+        "consultar_estoques",
+        "consultar_produtos_com_estoque_baixo",
+    },
+    "analise_vendas": {
+        "pesquisar_smartphones",
+        "consultar_vendas",
+        "consultar_vendas_produto",
+        "consultar_produtos_mais_vendidos",
+    },
+    "consulta_compras": {
+        "pesquisar_smartphones",
+        "consultar_compras",
+        "consultar_compras_produto",
+        "consultar_compras_em_aberto",
+    },
+    "analise_margem": {
+        "pesquisar_smartphones",
+        "analisar_desconto_produto",
+        "analisar_descontos_todos_produtos",
+    },
+    "analise_empresa": {
+        "consultar_painel_alertas_empresariais",
+    },
+    "consulta_produto": {
+        "pesquisar_smartphones",
+        "consultar_produtos",
+        "consultar_produto_por_id",
+    },
+    "consulta_fornecedor": {
+        "consultar_fornecedores",
+        "pesquisar_fornecedores_cadastrados",
+        "consultar_fornecedor_por_id",
+    },
+    "consulta_concorrente": {
+        "consultar_concorrentes",
+        "consultar_ofertas_concorrentes",
+    },
+    "conversa": set(),
+    "esclarecimento": set(),
+}
+
+
+# ============================================================
+# FUNÇÕES BÁSICAS
+# ============================================================
+
 def normalizar_texto(
     texto: str,
 ) -> str:
     """
-    Converte texto para minúsculas e remove acentos.
+    Converte texto para minúsculas, remove acentos e compacta espaços.
     """
 
     texto_sem_acentos = "".join(
@@ -384,29 +537,36 @@ def normalizar_texto(
 
 def _contem_algum(
     texto: str,
-    palavras: set[str],
+    termos: Iterable[str],
 ) -> bool:
     return any(
-        palavra in texto
-        for palavra in palavras
+        termo in texto
+        for termo in termos
+    )
+
+
+def _contar_termos(
+    texto: str,
+    termos: Iterable[str],
+) -> int:
+    return sum(
+        1
+        for termo in termos
+        if termo in texto
     )
 
 
 def _remover_duplicadas(
-    ferramentas: Sequence[BaseTool],
+    ferramentas: Iterable[BaseTool],
 ) -> list[BaseTool]:
-    """
-    Remove ferramentas repetidas pelo nome.
-    """
-
     resultado: list[BaseTool] = []
-    nomes_adicionados: set[str] = set()
+    nomes: set[str] = set()
 
     for ferramenta in ferramentas:
-        if ferramenta.name in nomes_adicionados:
+        if ferramenta.name in nomes:
             continue
 
-        nomes_adicionados.add(
+        nomes.add(
             ferramenta.name
         )
 
@@ -417,216 +577,57 @@ def _remover_duplicadas(
     return resultado
 
 
+def _todas_ferramentas() -> list[BaseTool]:
+    return _remover_duplicadas(
+        ferramenta
+        for grupo in GRUPOS_FERRAMENTAS.values()
+        for ferramenta in grupo
+    )
+
+
 def _selecionar_ferramentas_por_nome(
     nomes: set[str],
 ) -> list[BaseTool]:
-    """
-    Localiza somente as ferramentas explicitamente solicitadas.
-
-    Regras críticas não devem enviar grupos completos ao modelo.
-    """
-
-    ferramentas: list[BaseTool] = []
-
-    for grupo in GRUPOS_FERRAMENTAS.values():
-        for ferramenta in grupo:
-            if ferramenta.name in nomes:
-                ferramentas.append(
-                    ferramenta
-                )
-
-    ferramentas = _remover_duplicadas(
-        ferramentas
-    )
+    ferramentas = [
+        ferramenta
+        for ferramenta in _todas_ferramentas()
+        if ferramenta.name in nomes
+    ]
 
     nomes_encontrados = {
         ferramenta.name
         for ferramenta in ferramentas
     }
 
-    nomes_ausentes = (
-        nomes
-        - nomes_encontrados
-    )
+    nomes_ausentes = nomes - nomes_encontrados
 
     if nomes_ausentes:
         raise RuntimeError(
             "Ferramentas obrigatórias não encontradas: "
             + ", ".join(
-                sorted(nomes_ausentes)
+                sorted(
+                    nomes_ausentes
+                )
             )
         )
 
     return ferramentas
 
 
-def _eh_consulta_preco_concorrente(
-    texto: str,
-) -> bool:
-    """
-    Detecta consulta de preço em uma loja concorrente.
-
-    Exemplos:
-
-    - Qual o preço do iPhone na Amazon?
-    - Quanto custa no Magalu?
-    - Compare nosso valor com o concorrente.
-    - Atualize a oferta da Magazine Luiza.
-    """
-
-    possui_termo_preco = _contem_algum(
-        texto,
-        _TERMOS_PRECO,
-    )
-
-    possui_loja_concorrente = _contem_algum(
-        texto,
-        _TERMOS_LOJAS_CONCORRENTES,
-    )
-
-    return (
-        possui_termo_preco
-        and possui_loja_concorrente
-    )
-
-
-def _rotear_regra_alto_nivel(
-    texto: str,
-) -> ResultadoRoteamento | None:
-    """
-    Aplica regras determinísticas para fluxos críticos.
-
-    Estas regras são avaliadas antes do roteamento genérico.
-    """
-
-    if _eh_consulta_preco_concorrente(
-        texto
-    ):
-        ferramentas = (
-            _selecionar_ferramentas_por_nome(
-                _FERRAMENTAS_CONSULTA_PRECO_CONCORRENTE
-            )
-        )
-
-        return ResultadoRoteamento(
-            intencao="leitura",
-            categorias=(
-                "produto",
-                "concorrente",
-                "preco_concorrente",
-            ),
-            ferramentas=tuple(
-                ferramentas
-            ),
-            motivo=(
-                "Regra de alto nível para consulta "
-                "de preço em concorrente."
-            ),
-        )
-
-    return None
-
-
 # ============================================================
-# ROTEAMENTO GENÉRICO
+# DETECÇÃO DE ESCOPO E INTENÇÃO
 # ============================================================
 
-def _pontuar_categoria(
-    texto: str,
-    categoria: str,
-) -> int:
-    palavras = PALAVRAS_CATEGORIAS.get(
-        categoria,
-        set(),
-    )
-
-    return sum(
-        1
-        for palavra in palavras
-        if palavra in texto
-    )
-
-
-def _detectar_intencao(
-    texto: str,
-) -> str:
-    possui_escrita = _contem_algum(
-        texto,
-        PALAVRAS_ESCRITA,
-    )
-
-    possui_analise = _contem_algum(
-        texto,
-        PALAVRAS_ANALITICAS,
-    )
-
-    if possui_escrita:
-        return "escrita"
-
-    if possui_analise:
-        return "analise"
-
-    if any(
-        _pontuar_categoria(
-            texto,
-            categoria,
-        ) > 0
-        for categoria in PALAVRAS_CATEGORIAS
-    ):
-        return "leitura"
-
-    return "conversa"
-
-
-def _detectar_acoes_escrita(
-    texto: str,
-) -> tuple[str, ...]:
-    return tuple(
-        acao
-        for acao, palavras
-        in PALAVRAS_ACOES.items()
-        if _contem_algum(
-            texto,
-            palavras,
-        )
-    )
-
-
-def _eh_ferramenta_leitura(
-    ferramenta: BaseTool,
-) -> bool:
-    return ferramenta.name.lower().startswith(
-        PREFIXOS_LEITURA
-    )
-
-
-def _eh_ferramenta_escrita_compativel(
-    ferramenta: BaseTool,
-    acoes: tuple[str, ...],
-) -> bool:
-    nome = ferramenta.name.lower()
-
-    for acao in acoes:
-        prefixos = ACOES_ESCRITA.get(
-            acao,
-            (),
-        )
-
-        if nome.startswith(prefixos):
-            return True
-
-    return False
-
-
-def _categorias_operacionais(
+def _detectar_categorias(
     texto: str,
 ) -> list[str]:
     pontuacoes = {
-        categoria: _pontuar_categoria(
+        categoria: _contar_termos(
             texto,
-            categoria,
+            termos,
         )
-        for categoria in PALAVRAS_CATEGORIAS
+        for categoria, termos
+        in CONCEITOS.items()
     }
 
     categorias = [
@@ -646,256 +647,439 @@ def _categorias_operacionais(
     return categorias
 
 
-def _expandir_dependencias(
-    categorias: list[str],
+def _detectar_intencao(
     texto: str,
-) -> list[str]:
-    """
-    Adiciona categorias auxiliares necessárias.
-    """
-
-    resultado = list(categorias)
-
-    if "venda" in resultado:
-        resultado.extend(
-            [
-                "produto",
-                "estoque",
-            ]
-        )
-
-    if "compra" in resultado:
-        resultado.extend(
-            [
-                "produto",
-                "fornecedor",
-                "estoque",
-            ]
-        )
-
-    if "campanha" in resultado:
-        resultado.append(
-            "produto"
-        )
-
-    if "preco_concorrente" in resultado:
-        resultado.extend(
-            [
-                "produto",
-                "concorrente",
-            ]
-        )
+) -> str:
+    if _contem_algum(
+        texto,
+        TERMOS_ESCRITA,
+    ):
+        return "escrita"
 
     if (
-        "fornecedor" in resultado
-        and "reposicao" in texto
+        _contem_algum(
+            texto,
+            TERMOS_ANALISE,
+        )
+        or _contem_algum(
+            texto,
+            TERMOS_EMPRESA_GERAL,
+        )
     ):
-        resultado.extend(
-            [
-                "produto",
-                "estoque",
-                "analises",
-            ]
-        )
+        return "analise"
 
-    return list(
-        dict.fromkeys(resultado)
-    )
+    if _detectar_categorias(
+        texto
+    ):
+        return "leitura"
+
+    return "conversa"
 
 
-def _detectar_categorias_alvo_escrita(
+def _eh_escopo_global(
     texto: str,
-) -> tuple[str, ...]:
-    """
-    Identifica a entidade alterada diretamente.
-    """
-
-    padroes: dict[
-        str,
-        tuple[str, ...],
-    ] = {
-        "produto": (
-            (
-                r"\b(?:cadastre|cadastrar|crie|criar|"
-                r"adicione|adicionar|atualize|atualizar|"
-                r"altere|alterar|modifique|modificar|"
-                r"exclua|excluir|remova|remover|"
-                r"desative|desativar|reative|reativar)\b"
-                r"(?:\s+\w+){0,3}\s+"
-                r"\b(?:produto|smartphone|celular)\b"
-            ),
-        ),
-        "estoque": (
-            (
-                r"\b(?:crie|criar|adicione|adicionar|"
-                r"atualize|atualizar|altere|alterar|"
-                r"modifique|modificar|remova|remover)\b"
-                r"(?:\s+\w+){0,3}\s+"
-                r"\b(?:estoque|unidades)\b"
-            ),
-        ),
-        "fornecedor": (
-            (
-                r"\b(?:cadastre|cadastrar|crie|criar|"
-                r"atualize|atualizar|altere|alterar|"
-                r"modifique|modificar|desative|desativar|"
-                r"reative|reativar|remova|remover)\b"
-                r"(?:\s+\w+){0,3}\s+"
-                r"\bfornecedor\b"
-            ),
-        ),
-        "compra": (
-            (
-                r"\b(?:registre|registrar|crie|criar|"
-                r"cancele|cancelar)\b"
-                r"(?:\s+\w+){0,3}\s+"
-                r"\bcompra\b"
-            ),
-            r"^\s*compre\b",
-        ),
-        "venda": (
-            (
-                r"\b(?:registre|registrar|crie|criar|"
-                r"cancele|cancelar)\b"
-                r"(?:\s+\w+){0,3}\s+"
-                r"\bvenda\b"
-            ),
-            r"^\s*venda\b",
-            r"^\s*vender\b",
-        ),
-        "campanha": (
-            (
-                r"\b(?:cadastre|cadastrar|crie|criar|"
-                r"atualize|atualizar|altere|alterar|"
-                r"ative|ativar|desative|desativar|"
-                r"cancele|cancelar)\b"
-                r"(?:\s+\w+){0,3}\s+"
-                r"\b(?:campanha|promocao)\b"
-            ),
-        ),
-        "concorrente": (
-            (
-                r"\b(?:cadastre|cadastrar|crie|criar|"
-                r"atualize|atualizar|altere|alterar|"
-                r"desative|desativar|reative|reativar)\b"
-                r"(?:\s+\w+){0,3}\s+"
-                r"\bconcorrente\b"
-            ),
-        ),
-        "preco_concorrente": (
-            (
-                r"\b(?:registre|registrar|cadastre|"
-                r"cadastrar|atualize|atualizar|"
-                r"adicione|adicionar)\b"
-                r"(?:\s+\w+){0,4}\s+"
-                r"\bpreco(?:\s+do|\s+de)?"
-                r"\s+concorrente\b"
-            ),
-        ),
-    }
-
-    categorias_encontradas = [
-        categoria
-        for categoria, expressoes
-        in padroes.items()
-        if any(
-            re.search(
-                expressao,
-                texto,
-            )
-            for expressao in expressoes
-        )
-    ]
-
-    return tuple(
-        categorias_encontradas
+) -> bool:
+    return _contem_algum(
+        texto,
+        TERMOS_ESCOPO_GLOBAL,
     )
 
 
-def _selecionar_por_intencao(
-    intencao: str,
-    categorias: list[str],
+def _possui_produto_especifico(
     texto: str,
-) -> list[BaseTool]:
-    if intencao == "conversa":
-        return []
+) -> bool:
+    """
+    Detecta indícios de produto individual na pergunta.
 
-    if intencao == "analise":
-        return list(
-            FERRAMENTAS_ANALISES
+    Não precisa reconhecer todos os nomes; serve apenas para distinguir
+    análise individual de consulta global.
+    """
+
+    padroes = (
+        r"\biphone\b",
+        r"\bgalaxy\b",
+        r"\bmoto(?:rola)?\b",
+        r"\bxiaomi\b",
+        r"\bredmi\b",
+        r"\basus\b",
+        r"\bproduto\s+\d+\b",
+        r"\bproduto\s+[a-z0-9]",
+        r"\besse produto\b",
+        r"\bdesse produto\b",
+        r"\besse aparelho\b",
+        r"\bdesse aparelho\b",
+    )
+
+    return any(
+        re.search(
+            padrao,
+            texto,
         )
+        for padrao in padroes
+    )
 
-    if intencao == "leitura":
-        ferramentas: list[BaseTool] = []
 
-        for categoria in categorias:
-            grupo = GRUPOS_FERRAMENTAS.get(
-                categoria,
-                (),
-            )
+# ============================================================
+# REGRAS CRÍTICAS DE ALTO NÍVEL
+# ============================================================
 
-            consultas = [
-                ferramenta
-                for ferramenta in grupo
-                if _eh_ferramenta_leitura(
-                    ferramenta
-                )
-            ]
-
-            ferramentas.extend(
-                consultas or grupo
-            )
-
-        return _remover_duplicadas(
-            ferramentas
+def _eh_consulta_preco_concorrente(
+    texto: str,
+) -> bool:
+    return (
+        _contem_algum(
+            texto,
+            TERMOS_PRECO,
         )
-
-    categorias_alvo = (
-        _detectar_categorias_alvo_escrita(
-            texto
+        and _contem_algum(
+            texto,
+            CONCEITOS["concorrente"],
         )
     )
 
-    acoes = _detectar_acoes_escrita(
+
+def _eh_prioridade_reposicao_catalogo(
+    texto: str,
+) -> bool:
+    """
+    Detecta decisões globais de reposição.
+
+    Exemplos:
+    - Qual produto apresenta maior risco de ruptura?
+    - Qual produto devemos comprar primeiro?
+    - Qual merece prioridade máxima de reposição?
+    """
+
+    escopo_global = _eh_escopo_global(
         texto
     )
 
-    ferramentas: list[BaseTool] = []
+    contexto_reposicao = (
+        _contem_algum(
+            texto,
+            TERMOS_PRIORIDADE_REPOSICAO,
+        )
+        or _contem_algum(
+            texto,
+            TERMOS_REPOSICAO,
+        )
+        or _contem_algum(
+            texto,
+            TERMOS_URGENCIA_ESTOQUE,
+        )
+    )
+
+    menciona_multiplas_dimensoes = (
+        _contar_termos(
+            texto,
+            {
+                "estoque",
+                "vendas",
+                "demanda",
+                "compras pendentes",
+                "fornecedores",
+                "prazo",
+            },
+        )
+        >= 2
+    )
+
+    return (
+        (
+            escopo_global
+            and contexto_reposicao
+        )
+        or (
+            escopo_global
+            and menciona_multiplas_dimensoes
+        )
+    )
+
+
+def _eh_recomendacao_fornecedor(
+    texto: str,
+) -> bool:
+    """
+    Detecta decisão de fornecedor para um produto específico.
+    """
+
+    if _eh_prioridade_reposicao_catalogo(
+        texto
+    ):
+        return False
+
+    menciona_fornecedor = _contem_algum(
+        texto,
+        CONCEITOS["fornecedor"],
+    )
+
+    menciona_reposicao = _contem_algum(
+        texto,
+        TERMOS_REPOSICAO,
+    )
+
+    menciona_decisao = _contem_algum(
+        texto,
+        TERMOS_DECISAO,
+    )
+
+    menciona_estoque = _contem_algum(
+        texto,
+        TERMOS_URGENCIA_ESTOQUE,
+    )
+
+    menciona_comparacao = _contem_algum(
+        texto,
+        TERMOS_COMPARACAO_FORNECEDOR,
+    )
+
+    return (
+        (
+            menciona_fornecedor
+            and (
+                menciona_reposicao
+                or menciona_decisao
+                or menciona_estoque
+                or menciona_comparacao
+            )
+        )
+        or (
+            menciona_reposicao
+            and menciona_decisao
+            and _possui_produto_especifico(
+                texto
+            )
+        )
+        or (
+            menciona_comparacao
+            and (
+                menciona_fornecedor
+                or _possui_produto_especifico(
+                    texto
+                )
+            )
+        )
+    )
+
+
+def _rotear_regra_alto_nivel(
+    texto: str,
+) -> ResultadoRoteamento | None:
+    """
+    Aplica regras inequívocas antes do roteamento genérico.
+    """
+
+    if _eh_consulta_preco_concorrente(
+        texto
+    ):
+        ferramentas = (
+            _selecionar_ferramentas_por_nome(
+                FERRAMENTAS_PRECO_CONCORRENTE
+            )
+        )
+
+        return ResultadoRoteamento(
+            intencao="leitura",
+            categorias=(
+                "produto",
+                "concorrente",
+                "preco_concorrente",
+            ),
+            ferramentas=tuple(
+                ferramentas
+            ),
+            motivo=(
+                "Regra de alto nível para consulta "
+                "de preço em concorrente."
+            ),
+        )
+
+    if _eh_prioridade_reposicao_catalogo(
+        texto
+    ):
+        ferramentas = (
+            _selecionar_ferramentas_por_nome(
+                FERRAMENTAS_PRIORIDADE_REPOSICAO
+            )
+        )
+
+        return ResultadoRoteamento(
+            intencao="analise",
+            categorias=(
+                "produto",
+                "estoque",
+                "venda",
+                "compra",
+                "fornecedor",
+                "analises",
+            ),
+            ferramentas=tuple(
+                ferramentas
+            ),
+            motivo=(
+                "Regra de alto nível para análise global "
+                "de prioridade de reposição."
+            ),
+        )
+
+    if _eh_recomendacao_fornecedor(
+        texto
+    ):
+        ferramentas = (
+            _selecionar_ferramentas_por_nome(
+                FERRAMENTAS_RECOMENDACAO_FORNECEDOR
+            )
+        )
+
+        return ResultadoRoteamento(
+            intencao="analise",
+            categorias=(
+                "produto",
+                "estoque",
+                "fornecedor",
+                "compra",
+                "analises",
+            ),
+            ferramentas=tuple(
+                ferramentas
+            ),
+            motivo=(
+                "Regra de alto nível para recomendação "
+                "de fornecedor de um produto."
+            ),
+        )
+
+    return None
+
+
+# ============================================================
+# ROTEAMENTO GENÉRICO POR RELEVÂNCIA
+# ============================================================
+
+def _eh_ferramenta_leitura(
+    ferramenta: BaseTool,
+) -> bool:
+    nome = ferramenta.name.casefold()
+
+    return nome.startswith(
+        PREFIXOS_LEITURA
+    )
+
+
+def _eh_ferramenta_escrita(
+    ferramenta: BaseTool,
+) -> bool:
+    nome = ferramenta.name.casefold()
+
+    return nome.startswith(
+        PREFIXOS_ESCRITA
+    )
+
+
+def _expandir_dependencias(
+    categorias: list[str],
+) -> list[str]:
+    resultado = list(
+        categorias
+    )
+
+    dependencias: dict[str, tuple[str, ...]] = {
+        "venda": (
+            "produto",
+            "estoque",
+        ),
+        "compra": (
+            "produto",
+            "fornecedor",
+            "estoque",
+        ),
+        "campanha": (
+            "produto",
+        ),
+        "preco_concorrente": (
+            "produto",
+            "concorrente",
+        ),
+    }
 
     for categoria in categorias:
-        grupo = GRUPOS_FERRAMENTAS.get(
-            categoria,
-            (),
-        )
-
-        ferramentas.extend(
-            ferramenta
-            for ferramenta in grupo
-            if _eh_ferramenta_leitura(
-                ferramenta
+        resultado.extend(
+            dependencias.get(
+                categoria,
+                (),
             )
         )
 
-        if categoria not in categorias_alvo:
-            continue
+    return list(
+        dict.fromkeys(
+            resultado
+        )
+    )
 
-        ferramentas.extend(
-            ferramenta
-            for ferramenta in grupo
-            if _eh_ferramenta_escrita_compativel(
-                ferramenta,
-                acoes,
+
+def _ferramentas_candidatas(
+    categorias: list[str],
+    intencao: str,
+) -> list[BaseTool]:
+    candidatas: list[BaseTool] = []
+
+    for categoria in categorias:
+        candidatas.extend(
+            GRUPOS_FERRAMENTAS.get(
+                categoria,
+                (),
             )
+        )
+
+    if intencao == "analise":
+        candidatas.extend(
+            FERRAMENTAS_ANALISES
         )
 
     return _remover_duplicadas(
-        ferramentas
+        candidatas
     )
+
+
+def _palavras_relevantes(
+    texto: str,
+) -> set[str]:
+    palavras_ignoradas = {
+        "qual",
+        "quais",
+        "como",
+        "para",
+        "pela",
+        "pelo",
+        "nosso",
+        "nossa",
+        "nossos",
+        "nossas",
+        "esse",
+        "essa",
+        "desse",
+        "dessa",
+        "produto",
+        "produtos",
+    }
+
+    return {
+        palavra
+        for palavra in re.findall(
+            r"[a-z0-9]+",
+            texto,
+        )
+        if (
+            len(palavra) >= 4
+            and palavra not in palavras_ignoradas
+        )
+    }
 
 
 def _pontuar_ferramenta(
     ferramenta: BaseTool,
     texto: str,
+    categorias: list[str],
     intencao: str,
 ) -> int:
     nome = normalizar_texto(
@@ -909,31 +1093,32 @@ def _pontuar_ferramenta(
         ferramenta.description or ""
     )
 
-    palavras_pergunta = {
-        palavra
-        for palavra in texto.split()
-        if len(palavra) >= 4
-    }
-
-    pontuacao = sum(
-        3
-        for palavra in palavras_pergunta
-        if palavra in nome
+    palavras = _palavras_relevantes(
+        texto
     )
 
-    pontuacao += sum(
-        1
-        for palavra in palavras_pergunta
-        if palavra in descricao
-    )
+    pontuacao = 0
 
-    if (
-        intencao == "escrita"
-        and not _eh_ferramenta_leitura(
-            ferramenta
-        )
-    ):
-        pontuacao += 5
+    for palavra in palavras:
+        if palavra in nome:
+            pontuacao += 5
+
+        if palavra in descricao:
+            pontuacao += 2
+
+    for categoria in categorias:
+        if categoria in nome:
+            pontuacao += 4
+
+        for termo in CONCEITOS.get(
+            categoria,
+            set(),
+        ):
+            if (
+                termo in texto
+                and termo in descricao
+            ):
+                pontuacao += 1
 
     if (
         intencao in {
@@ -944,46 +1129,153 @@ def _pontuar_ferramenta(
             ferramenta
         )
     ):
-        pontuacao += 4
+        pontuacao += 3
+
+    if (
+        intencao == "escrita"
+        and _eh_ferramenta_escrita(
+            ferramenta
+        )
+    ):
+        pontuacao += 5
+
+    # Favorece análises consolidadas em perguntas gerais.
+    if (
+        intencao == "analise"
+        and "painel" in nome
+        and _contem_algum(
+            texto,
+            TERMOS_EMPRESA_GERAL,
+        )
+    ):
+        pontuacao += 8
 
     return pontuacao
 
 
-def _aplicar_limite(
-    ferramentas: list[BaseTool],
+def _selecionar_genericamente(
     texto: str,
+    categorias: list[str],
     intencao: str,
 ) -> list[BaseTool]:
-    if (
-        len(ferramentas)
-        <= LIMITE_FERRAMENTAS_POR_REQUISICAO
-    ):
-        return ferramentas
+    if intencao == "conversa":
+        return []
 
-    ferramentas_ordenadas = sorted(
-        ferramentas,
-        key=lambda ferramenta: (
-            _pontuar_ferramenta(
-                ferramenta,
-                texto,
-                intencao,
+    categorias_expandidas = (
+        _expandir_dependencias(
+            categorias
+        )
+    )
+
+    if (
+        intencao == "analise"
+        and not categorias_expandidas
+    ):
+        categorias_expandidas = [
+            "analises",
+        ]
+
+    candidatas = _ferramentas_candidatas(
+        categorias=categorias_expandidas,
+        intencao=intencao,
+    )
+
+    if intencao == "escrita":
+        candidatas = [
+            ferramenta
+            for ferramenta in candidatas
+            if (
+                _eh_ferramenta_leitura(
+                    ferramenta
+                )
+                or _eh_ferramenta_escrita(
+                    ferramenta
+                )
             )
+        ]
+
+    pontuadas = [
+        (
+            _pontuar_ferramenta(
+                ferramenta=ferramenta,
+                texto=texto,
+                categorias=(
+                    categorias_expandidas
+                ),
+                intencao=intencao,
+            ),
+            ferramenta,
+        )
+        for ferramenta in candidatas
+    ]
+
+    pontuadas.sort(
+        key=lambda item: (
+            item[0],
+            item[1].name,
         ),
         reverse=True,
     )
 
-    return ferramentas_ordenadas[
+    ferramentas_positivas = [
+        ferramenta
+        for pontuacao, ferramenta in pontuadas
+        if pontuacao > 0
+    ]
+
+    return ferramentas_positivas[
         :LIMITE_FERRAMENTAS_POR_REQUISICAO
     ]
 
 
+# ============================================================
+# CLASSIFICADOR LLM COMO FALLBACK
+# ============================================================
+
+def selecionar_ferramentas_intencao_classificada(
+    intencao: str,
+) -> list[BaseTool]:
+    nomes = (
+        FERRAMENTAS_POR_INTENCAO_CLASSIFICADA.get(
+            intencao
+        )
+    )
+
+    if not nomes:
+        return []
+
+    return _selecionar_ferramentas_por_nome(
+        nomes
+    )
+
+
+def roteamento_precisa_classificador(
+    resultado: ResultadoRoteamento,
+) -> bool:
+    """
+    Classificador só é necessário quando:
+
+    - nenhuma ferramenta foi encontrada;
+    - ou o resultado ainda ficou excessivamente amplo.
+    """
+
+    quantidade = len(
+        resultado.ferramentas
+    )
+
+    return (
+        quantidade == 0
+        or quantidade >= 6
+    )
+
+
+# ============================================================
+# INTERFACE PÚBLICA
+# ============================================================
+
 def rotear_ferramentas(
     pergunta: str,
 ) -> ResultadoRoteamento:
-    """
-    Analisa uma pergunta e retorna somente as ferramentas necessárias.
-    """
-
     pergunta_limpa = pergunta.strip()
 
     if not pergunta_limpa:
@@ -995,54 +1287,38 @@ def rotear_ferramentas(
         pergunta_limpa
     )
 
-    resultado_alto_nivel = (
+    regra_alto_nivel = (
         _rotear_regra_alto_nivel(
             texto
         )
     )
 
-    if resultado_alto_nivel is not None:
-        return resultado_alto_nivel
+    if regra_alto_nivel is not None:
+        return regra_alto_nivel
 
     intencao = _detectar_intencao(
         texto
     )
 
-    categorias = _categorias_operacionais(
+    categorias = _detectar_categorias(
         texto
     )
 
-    if intencao == "analise":
-        categorias = [
-            "analises"
-        ]
-
-    elif (
-        not categorias
+    if (
+        intencao == "analise"
+        and not categorias
         and _contem_algum(
             texto,
-            PALAVRAS_EMPRESA_GERAL,
+            TERMOS_EMPRESA_GERAL,
         )
     ):
-        intencao = "analise"
         categorias = [
-            "analises"
+            "analises",
         ]
 
-    categorias = _expandir_dependencias(
-        categorias,
-        texto,
-    )
-
-    ferramentas = _selecionar_por_intencao(
-        intencao=intencao,
+    ferramentas = _selecionar_genericamente(
+        texto=texto,
         categorias=categorias,
-        texto=texto,
-    )
-
-    ferramentas = _aplicar_limite(
-        ferramentas=ferramentas,
-        texto=texto,
         intencao=intencao,
     )
 
@@ -1050,11 +1326,18 @@ def rotear_ferramentas(
         motivo = (
             "A pergunta não depende de dados empresariais."
         )
+
+    elif ferramentas:
+        motivo = (
+            "Ferramentas selecionadas por relevância "
+            f"para a intenção '{intencao}' e categorias: "
+            f"{', '.join(categorias) or 'geral'}."
+        )
+
     else:
         motivo = (
-            "Ferramentas selecionadas conforme a intenção "
-            f"'{intencao}' e as categorias: "
-            f"{', '.join(categorias)}."
+            "Não houve confiança suficiente no roteamento "
+            "determinístico; o classificador poderá ser usado."
         )
 
     return ResultadoRoteamento(
@@ -1108,5 +1391,7 @@ __all__ = [
     "diagnosticar_roteamento",
     "normalizar_texto",
     "rotear_ferramentas",
+    "roteamento_precisa_classificador",
     "selecionar_ferramentas",
+    "selecionar_ferramentas_intencao_classificada",
 ]

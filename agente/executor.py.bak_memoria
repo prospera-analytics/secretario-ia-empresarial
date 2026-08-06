@@ -15,10 +15,6 @@ from langchain_core.tools import BaseTool
 
 import json
 
-from agente.classificador import (
-    classificar_intencao,
-)
-
 from agente.modelo import criar_modelo
 from agente.prompt import PROMPT_SECRETARIO_EMPRESARIAL
 from agente.roteador import (
@@ -269,16 +265,12 @@ def _resultados_ferramentas(
     return resultados
 
 
-
 def _atualizar_memoria_com_ferramentas(
     memoria: Mapping[str, Any] | None,
     resultado_agente: Mapping[str, Any],
 ) -> dict[str, Any]:
     """
-    Atualiza a memória somente com resultados factuais confirmados
-    por ferramentas realmente executadas.
-
-    O texto livre produzido pelo modelo não é copiado para a memória.
+    Registra somente resultados factuais confirmados por ferramentas.
     """
 
     memoria_atualizada = normalizar_memoria(
@@ -302,53 +294,15 @@ def _atualizar_memoria_com_ferramentas(
     return memoria_atualizada
 
 
-def _eh_pergunta_global_produtos(
-    pergunta: str,
-) -> bool:
-    """
-    Detecta perguntas que precisam analisar todo o catálogo.
-
-    O produto atual da memória não deve limitar essas consultas.
-    """
-
-    texto = pergunta.casefold()
-
-    termos_globais = (
-        "qual produto",
-        "quais produtos",
-        "entre os produtos",
-        "entre todos",
-        "todos os produtos",
-        "todo o catálogo",
-        "todo o catalogo",
-        "do catálogo",
-        "do catalogo",
-        "maior risco",
-        "menor estoque",
-        "maiores riscos",
-        "mais crítico",
-        "mais critico",
-        "prioridade máxima",
-        "prioridade maxima",
-        "prioridade de reposição",
-        "prioridade de reposicao",
-    )
-
-    return any(
-        termo in texto
-        for termo in termos_globais
-    )
-
 
 def _memoria_para_pergunta(
     pergunta: str,
     memoria: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     """
-    Cria a memória factual usada somente na pergunta atual.
+    Remove apenas o foco em um produto quando a consulta é global.
 
-    Em consultas globais, remove todo o contexto específico do
-    produto anterior, sem modificar a memória persistente original.
+    Os demais fatos confirmados continuam disponíveis.
     """
 
     memoria_resolvida = normalizar_memoria(
@@ -358,15 +312,10 @@ def _memoria_para_pergunta(
     if _eh_pergunta_global_produtos(
         pergunta
     ):
-        for campo in (
-            "produto",
-            "ultima_analise_reposicao",
-            "ultimo_fornecedor_recomendado",
-            "ultima_compra_pendente",
-        ):
-            memoria_resolvida[campo] = None
+        memoria_resolvida["produto"] = None
 
     return memoria_resolvida
+
 
 def executar_agente(
     pergunta: str,
@@ -556,6 +505,56 @@ def conversar(
         resultado
     )
 
+
+def _eh_pergunta_global_produtos(
+    pergunta: str,
+) -> bool:
+    """
+    Detecta perguntas que devem analisar todos os produtos.
+    """
+
+    texto = pergunta.casefold()
+
+    termos_globais = (
+        "qual produto",
+        "quais produtos",
+        "entre os produtos",
+        "entre todos",
+        "do catálogo",
+        "do catalogo",
+        "maior risco",
+        "menor estoque",
+        "maiores riscos",
+        "mais crítico",
+        "mais critico",
+    )
+
+    return any(
+        termo in texto
+        for termo in termos_globais
+    )
+
+
+def _memoria_para_pergunta(
+    pergunta: str,
+    memoria: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Remove o foco em um produto quando a pergunta é global.
+
+    Os demais fatos confirmados permanecem disponíveis.
+    """
+
+    memoria_resolvida = normalizar_memoria(
+        memoria
+    )
+
+    if _eh_pergunta_global_produtos(
+        pergunta
+    ):
+        memoria_resolvida["produto"] = None
+
+    return memoria_resolvida
 
 def conversar_com_memoria(
     pergunta: str,
