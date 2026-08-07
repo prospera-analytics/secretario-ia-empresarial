@@ -2,8 +2,6 @@ __pycache__/
 
 *.pyc
 
-*.db
-
 .env
 
 .venv/
@@ -11,8 +9,6 @@ __pycache__/
 .vscode/
 
 .idea/
-
-database/*.db
 
 .pytest_cache/
 *.bak
