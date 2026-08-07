@@ -1,6 +1,6 @@
-# 🤖 Agente de IA para Apoio à Gestão Comercial
+# 🤖 Secretário IA Empresarial para Apoio à Gestão Comercial
 
-Aplicação desenvolvida em Python e Streamlit para apoiar decisões comerciais por meio de um agente de inteligência artificial.
+Aplicação desenvolvida em Python com deployment no Streamlit para apoiar decisões comerciais por meio de um agente de inteligência artificial. O agente foi desenvolvido para interpretar perguntas em linguagem natural e responder consultas relacionadas a produtos, estoque, vendas, fornecedores, compras, precificação e concorrência. Para isso, combina memória conversacional, resolução automática de contexto, roteamento inteligente, fluxos determinísticos e ferramentas especializadas, consultando bancos de dados e realizando web scraping quando necessário.
 
 O agente responde perguntas em linguagem natural sobre:
 
@@ -11,11 +11,9 @@ O agente responde perguntas em linguagem natural sobre:
 - compras;
 - campanhas;
 - preços de concorrentes;
-- risco de ruptura;
+- risco de ruptura (falta de estoque, gargalos operacionais ou perda de vendas);
 - reposição de produtos;
 - redução de preços.
-
-A aplicação combina banco de dados relacional, memória conversacional, ferramentas especializadas, fluxos determinísticos e um modelo de linguagem utilizado como apoio quando não existe um fluxo específico.
 
 ---
 
@@ -42,7 +40,7 @@ O agente consegue:
 - realizar busca e extração de preços na web;
 - armazenar ofertas concorrentes no banco;
 - reutilizar preços recentes por meio de cache;
-- avaliar se vale a pena reduzir um preço;
+- avaliar se vale a pena reduzir um preço (considerando margem de lucro);
 - manter o produto e o concorrente no contexto da conversa;
 - conectar informações de diferentes tabelas para responder perguntas empresariais.
 
@@ -136,7 +134,7 @@ Qual é o preço do iPhone 16 na Amazon?
 Como ele se compara ao nosso?
 ```
 
-Na segunda pergunta, o agente reutiliza o produto e o concorrente confirmados anteriormente.
+Na segunda pergunta, o agente reutiliza o produto e o concorrente confirmados anteriormente, graças à memória contextual.
 
 ### 3. Roteador de intenções
 
@@ -167,7 +165,11 @@ Ele recebe:
 - histórico reduzido;
 - ferramentas selecionadas pelo roteador.
 
-O modelo não deve inventar dados empresariais.
+Antes de consultar o modelo, o sistema tenta resolver a solicitação utilizando regras de negócio, consultas ao banco de dados e ferramentas especializadas, produzindo respostas reproduzíveis e baseadas em dados. 
+
+Somente quando não existe um fluxo específico capaz de responder à pergunta é que o LLM é acionado para interpretar a solicitação e decidir quais ferramentas utilizar. 
+
+Essa abordagem híbrida reduz alucinações, diminui o custo computacional e uso desnecessário de tokens, melhora o tempo de resposta e garante maior consistência nas respostas do agente.
 
 ### 6. Ferramentas especializadas
 
@@ -349,4 +351,4 @@ A próxima funcionalidade planejada é a geração de gráficos de vendas ao lon
 
 ## Licença
 
-Projeto desenvolvido para fins educacionais, demonstração técnica e portfólio.
+Projeto desenvolvido para fins educacionais, demonstração técnica e portfólio.git 

@@ -22,6 +22,7 @@ from analises.margem import (
 from crud.concorrente import (
     listar_concorrentes,
     listar_precos_concorrentes,
+    buscar_menor_preco_concorrente,
 )
 
 from crud.produto import listar_produtos
@@ -280,13 +281,25 @@ def normalizar_texto(
     """
     Normaliza texto para as regras determinísticas.
 
-    Remove acentos, pontuação e separa números de letras.
+    - remove acentos;
+    - converte ç para c;
+    - remove pontuação;
+    - separa números de letras.
 
     Exemplos:
 
     128GB -> 128 gb
+    preço -> preco
     "E na Amazon?" -> "e na amazon"
     """
+
+    texto = texto.replace(
+        "ç",
+        "c",
+    ).replace(
+        "Ç",
+        "C",
+    )
 
     sem_acentos = "".join(
         caractere
@@ -322,7 +335,6 @@ def _contem_algum(
         termo in texto
         for termo in termos
     )
-
 
 def _eh_decisao_reducao_preco(
     texto: str,
@@ -503,7 +515,27 @@ def detectar_fluxo(
         texto,
         _TERMOS_PRECO_INTERNO,
     )
+    
+    possui_reducao_preco = _contem_algum(
+        texto,
+        _TERMOS_REDUCAO_PRECO,
+    )
 
+    possui_decisao_preco = _contem_algum(
+        texto,
+        _TERMOS_DECISAO_PRECO,
+    )
+
+    possui_reducao_preco = _contem_algum(
+    texto,
+    _TERMOS_REDUCAO_PRECO,
+    )
+
+    possui_decisao_preco = _contem_algum(
+        texto,
+        _TERMOS_DECISAO_PRECO,
+    )
+    
     pediu_repeticao = _contem_algum(
         texto,
         _TERMOS_REPETICAO,
@@ -530,9 +562,17 @@ def detectar_fluxo(
     )
 
 
-    if _eh_decisao_reducao_preco(
-        texto=texto,
-        memoria=memoria,
+    if (
+        _eh_decisao_reducao_preco(
+            texto=texto,
+            memoria=memoria,
+        )
+        or (
+            tem_produto_resolvido
+            and possui_reducao_preco
+            and possui_decisao_preco
+            and possui_preco
+        )
     ):
         return "avaliar_reducao_preco"
 
@@ -1932,6 +1972,7 @@ def _filtrar_comparacoes_catalogo(
 
 def _avaliar_reducao_preco(
     memoria: Mapping[str, Any],
+    contexto: ContextoResolvido | None = None,
     margem_minima_percentual: Decimal = Decimal("10"),
 ) -> tuple[str, dict[str, Any]]:
     """
@@ -1946,6 +1987,75 @@ def _avaliar_reducao_preco(
     comparacao = memoria.get(
         "ultima_comparacao"
     )
+    
+    # Se não existe uma comparação anterior, tenta montar uma
+# automaticamente usando o produto informado na pergunta
+# e a melhor oferta concorrente já armazenada no banco.
+    if (
+        not isinstance(comparacao, Mapping)
+        and contexto is not None
+        and contexto.produto is not None
+    ):
+        produto = contexto.produto
+
+        with SessionLocal() as sessao:
+            menor_preco = buscar_menor_preco_concorrente(
+                sessao=sessao,
+                produto_id=produto["id"],
+                apenas_correspondencia_exata=True,
+            )
+
+            if menor_preco is not None:
+                concorrente = menor_preco.concorrente
+
+                preco_interno = Decimal(
+                    str(produto["preco_venda"])
+                )
+
+                preco_concorrente = Decimal(
+                    str(menor_preco.preco)
+                )
+
+                diferenca = (
+                    preco_interno
+                    - preco_concorrente
+                ).quantize(
+                    Decimal("0.01"),
+                    rounding=ROUND_HALF_UP,
+                )
+
+                percentual = (
+                    diferenca
+                    / preco_concorrente
+                    * Decimal("100")
+                    if preco_concorrente != 0
+                    else Decimal("0")
+                )
+
+                comparacao = {
+                    "produto_id": produto["id"],
+                    "produto_nome": produto["nome"],
+                    "concorrente_id": menor_preco.concorrente_id,
+                    "concorrente_nome": concorrente.nome,
+                    "preco_interno": float(
+                        preco_interno
+                    ),
+                    "preco_concorrente": float(
+                        preco_concorrente
+                    ),
+                    "diferenca_valor": float(
+                        diferenca
+                    ),
+                    "diferenca_percentual": float(
+                        percentual
+                    ),
+                    "url": menor_preco.url,
+                    "coletado_em": (
+                        menor_preco.coletado_em.isoformat()
+                        if menor_preco.coletado_em
+                        else None
+                    ),
+                }
 
     if not isinstance(comparacao, Mapping):
         return (
@@ -2328,7 +2438,8 @@ def executar_fluxo_deterministico(
 
     if fluxo == "avaliar_reducao_preco":
         resposta, dados = _avaliar_reducao_preco(
-            memoria_atual
+            memoria=memoria_atual,
+            contexto=contexto,
         )
 
         memoria_atual = registrar_fluxo(

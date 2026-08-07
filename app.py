@@ -126,9 +126,8 @@ def _formatar_erro(
         or "rate_limit_exceeded" in mensagem
     ):
         return (
-            "A consulta ultrapassou o limite de processamento "
-            "do modelo. Tente novamente com uma pergunta mais "
-            "direta ou limpe a conversa."
+            "O limite diário de uso do modelo de IA foi atingido. Aguarde alguns minutos até a renovação da cota ou utilize uma chave de API com um plano de maior capacidade.\n\n"
+            f"Detalhes técnicos: `{mensagem}`"
         )
 
     if (
@@ -160,12 +159,9 @@ def main() -> None:
         page_icon="🤖",
         layout="centered",
     )
-    
+
     _inicializar_banco()
-    
     _inicializar_estado()
-    
-    
 
     st.title(
         "🤖 Secretário IA Empresarial"
@@ -176,6 +172,51 @@ def main() -> None:
         "fornecedores, campanhas, concorrentes ou análises "
         "da empresa."
     )
+
+    st.markdown(
+        "### 💡 Perguntas de exemplo"
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button(
+            "📦 Produto com maior risco de ruptura",
+            use_container_width=True,
+        ):
+            st.session_state.pergunta_exemplo = (
+                "Qual produto apresenta maior risco de ruptura "
+                "e por quê?"
+            )
+
+        if st.button(
+            "🚚 Melhor fornecedor",
+            use_container_width=True,
+        ):
+            st.session_state.pergunta_exemplo = (
+                "Quem oferece a melhor combinação de custo "
+                "e prazo para o Samsung Galaxy S25 Ultra "
+                "512 GB?"
+            )
+
+    with col2:
+        if st.button(
+            "📉 Vale a pena reduzir o preço?",
+            use_container_width=True,
+        ):
+            st.session_state.pergunta_exemplo = (
+                "Vale a pena reduzir nosso preço do "
+                "iPhone 16 128 GB?"
+            )
+
+        if st.button(
+            "📊 Comparar catálogo",
+            use_container_width=True,
+        ):
+            st.session_state.pergunta_exemplo = (
+                "Compare todos os nossos produtos com produtos "
+                "equivalentes ou iguais de concorrentes."
+            )
 
     with st.sidebar:
         st.header(
@@ -198,6 +239,12 @@ def main() -> None:
     pergunta = st.chat_input(
         "Digite sua pergunta..."
     )
+
+    if not pergunta:
+        pergunta = st.session_state.pop(
+            "pergunta_exemplo",
+            None,
+        )
 
     if not pergunta:
         return
@@ -241,7 +288,6 @@ def main() -> None:
                 st.session_state.memoria = (
                     resultado["memoria"]
                 )
-                    
 
             except Exception as erro:
                 resposta = _formatar_erro(
