@@ -351,7 +351,3 @@ python -m pytest -q
 A próxima funcionalidade planejada é a geração de gráficos de vendas ao longo do tempo diretamente pela interface.
 
 ---
-
-## Licença
-
-Projeto desenvolvido para fins educacionais, demonstração técnica e portfólio.git 
