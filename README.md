@@ -20,8 +20,8 @@ O agente responde perguntas em linguagem natural sobre:
 ## Demonstração
 
 <p align="center">
-  <img src="assets/comparacao_precos.png" width="48%" alt="Comparação de preços com concorrentes">
-  <img src="assets/analise_reposicao.png" width="48%" alt="Análise de reposição de estoque">
+  <img src="assets/exemplo_ia_empresarial.png" width="48%" alt="Comparação de preços com concorrentes">
+  <img src="assets/exemplo_ia_empresarial2.png" width="48%" alt="Lista dos produtos em estoque">
 </p>
 
 ---
