@@ -121,6 +121,8 @@ O sistema utiliza um banco SQLite (`database/empresa.db`) contendo os dados da e
 
 Durante a inicialização da aplicação, o banco é criado e populado automaticamente quando necessário, permitindo que o agente realize consultas e análises sem depender de arquivos externos, exceto quando há necessidade de fazer web scraping para obter preços de produtos de concorrentes.
 
+SQLAlchemy é utilizado para definir os modelos do banco e realizar operações de leitura e escrita por meio de objetos Python. Assim, ele transforma operações em Python dadas pelo usuário em consultas SQL e executa no banco de dados.
+
 ## Explicação das etapas
 
 ### 1. Interface em Streamlit
