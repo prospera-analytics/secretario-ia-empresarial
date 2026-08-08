@@ -1,6 +1,6 @@
 # 🤖 Secretário IA Empresarial para Apoio à Gestão Comercial
 
-Aplicação desenvolvida em Python com deployment no Streamlit para apoiar decisões comerciais por meio de um agente de inteligência artificial. O agente utiliza LangChain para organizar a integração entre LLM, ferramentas e fluxo de execução, enquanto a Groq fornece a infraestrutura utilizada para executar o modelo de linguagem.
+Aplicação desenvolvida em Python com deployment no Streamlit (link de acesso: https://ia-empresarial.streamlit.app/) para apoiar decisões comerciais por meio de um agente de inteligência artificial. O agente utiliza LangChain para organizar a integração entre LLM, ferramentas e fluxo de execução, enquanto a Groq fornece a infraestrutura utilizada para executar o modelo de linguagem.
 
  O agente Secretário IA Empresarial foi desenvolvido para interpretar perguntas em linguagem natural e responder consultas relacionadas a produtos, estoque, vendas, fornecedores, compras, precificação e concorrência. Para isso, combina memória conversacional, resolução automática de contexto, roteamento inteligente, fluxos determinísticos e ferramentas especializadas, consultando bancos de dados e realizando web scraping quando necessário.
 
