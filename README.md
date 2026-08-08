@@ -1,6 +1,8 @@
 # 🤖 Secretário IA Empresarial para Apoio à Gestão Comercial
 
-Aplicação desenvolvida em Python com deployment no Streamlit (link de acesso: https://ia-empresarial.streamlit.app/) para apoiar decisões comerciais por meio de um agente de inteligência artificial. O agente utiliza LangChain para organizar a integração entre LLM, ferramentas e fluxo de execução, enquanto a Groq fornece a infraestrutura utilizada para executar o modelo de linguagem.
+Aplicação desenvolvida em Python com deployment no Streamlit para apoiar decisões comerciais por meio de um agente de inteligência artificial. O agente utiliza LangChain para organizar a integração entre LLM, ferramentas e fluxo de execução, enquanto a Groq fornece a infraestrutura utilizada para executar o modelo de linguagem.
+
+**[Acessar aplicação no Streamlit](https://ia-empresarial.streamlit.app/)**
 
  O agente Secretário IA Empresarial foi desenvolvido para interpretar perguntas em linguagem natural e responder consultas relacionadas a produtos, estoque, vendas, fornecedores, compras, precificação e concorrência. Para isso, combina memória conversacional, resolução automática de contexto, roteamento inteligente, fluxos determinísticos e ferramentas especializadas, consultando bancos de dados e realizando web scraping quando necessário.
 
@@ -367,5 +369,16 @@ python -m pytest -q
 ## Próxima etapa
 
 A próxima funcionalidade planejada é a geração de gráficos de vendas ao longo do tempo diretamente pela interface.
+
+## Principais desafios do projeto
+
+Fazer o agente entender o que o usuário está perguntando:
+
+Como temos diversas tabelas contendo estoque, preços, fornecedores, concorrentes e ainda temos web scraping para buscar dados na web, foi um desafio criar fluxos para permitir que o agente saiba direcionar seu acesso aos dados necessários para responder a pergunta e fazer a comunicação entre diferentes dados para obter contexto essencial para gerar a resposta correta baseada em dados
+
+
+Buscar preços reais na internet com segurança:
+
+Sites como Amazon e Magazine Luiza mostram muitas informações e vários números. O desafio foi ensinar o sistema a encontrar o produto correto e o preço correto, sem confundir parcela, desconto ou um produto parecido com aquilo que realmente está sendo procurado.
 
 ---
