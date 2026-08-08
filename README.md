@@ -208,7 +208,7 @@ O banco relacional contém tabelas relacionadas a:
 - concorrentes;
 - preços concorrentes.
 
-O banco não é o foco principal do projeto, mas fornece os dados necessários para o agente conectar informações e gerar recomendações.
+O banco de dados não é o foco principal do projeto, mas fornece as informações necessárias para que o agente conecte dados e gere análises e recomendações. O acesso ao banco é realizado por meio da camada crud/, que centraliza as operações de consulta e permite que os serviços recuperem apenas os dados necessários para cada análise. Essa arquitetura também contribui para reduzir o consumo desnecessário de tokens, pois, quando o uso do LLM é necessário, apenas as informações relevantes são fornecidas ao modelo.  
 
 ### 8. Busca de preços na web
 
@@ -242,7 +242,7 @@ challenge_alura/
 │   ├── orquestrador.py         # Fluxos determinísticos
 │   └── ferramentas/            # Ferramentas disponíveis ao agente
 │
-├── crud/                       # Operações de leitura e escrita no banco
+├── crud/                       # Operações de leitura no banco
 │
 ├── database/                   # Modelos SQLAlchemy e conexão
 │
