@@ -370,6 +370,8 @@ python -m pytest -q
 
 A próxima funcionalidade planejada é a geração de gráficos de vendas ao longo do tempo diretamente pela interface.
 
+---
+
 ## Principais desafios do projeto
 
 Fazer o agente entender o que o usuário está perguntando:
