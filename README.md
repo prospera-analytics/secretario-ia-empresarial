@@ -113,6 +113,12 @@ dos concorrentes.
 
 ---
 
+## Banco de Dados
+
+O sistema utiliza um banco SQLite (`database/empresa.db`) contendo os dados da empresa, como produtos, estoque, vendas, fornecedores, campanhas e preços de concorrentes. Essas informações servem como base para as análises realizadas pelo agente de IA. 
+
+Durante a inicialização da aplicação, o banco é criado e populado automaticamente quando necessário, permitindo que o agente realize consultas e análises sem depender de arquivos externos, exceto quando há necessidade de fazer web scraping para obter preços de produtos de concorrentes.
+
 ## Explicação das etapas
 
 ### 1. Interface em Streamlit
