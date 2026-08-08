@@ -160,9 +160,17 @@ Entre as intenções reconhecidas estão:
 
 ### 4. Fluxos determinísticos
 
-Consultas empresariais conhecidas são executadas por regras programadas.
+Consultas empresariais com regras bem definidas são direcionadas para fluxos determinísticos, que executam etapas previamente programadas em vez de depender do LLM para realizar toda a análise.
 
-Isso reduz alucinações e garante que cálculos e recomendações sejam baseados nos dados do sistema.
+Esses fluxos podem consultar o banco de dados, combinar informações de diferentes entidades, executar cálculos e aplicar regras de negócio antes de gerar a resposta.
+
+Por exemplo, na pergunta:
+
+> **"Vale a pena reduzir nosso preço do iPhone 16 128 GB?"**
+
+o sistema identifica o produto, obtém o preço interno e o preço do concorrente, considera o custo do produto e a margem mínima definida e calcula o impacto de uma possível redução de preço.
+
+Essa abordagem torna cálculos e decisões mais previsíveis, reduz o risco de alucinações e evita que o LLM seja utilizado em tarefas que podem ser resolvidas diretamente por regras e dados do sistema.
 
 ### 5. Modelo de linguagem
 
